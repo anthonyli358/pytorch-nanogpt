@@ -28,16 +28,35 @@ step 3 onward and should be pinned in config early: **vocab size (8k)** and
 Raw `.txt` per split from the HF Hub, `<|endoftext|>` separators intact.
 Cache-backed, so re-runs are free. Deliverable: `data/raw/*.txt`.
 
-### 2. Tokenizer *(current)*
+Output: `TinyStoriesV2-GPT4-train.txt` and `TinyStoriesV2-GPT4-valid.txt`
+
+### 2. Tokenizer ✓
 Train a SentencePiece BPE on the raw train text; wrap load/encode/decode in a
 thin `Tokenizer` class.
 - vocab **8k**, `model_type=bpe`, `byte_fallback=True` (never emit `<unk>`)
 - `<|endoftext|>` as a whole `user_defined_symbol`, doubling as BOS/EOS
 - subsample lines for training (no need for all ~2GB)
 
-Deliverable: `spm.model` + `spm.vocab`.
+A SentencePiece BPE tokenizer trained on the TinyStories train split. 
 
-### 3. Preprocess / pack
+- `vocab_size=8000` subword pieces is sufficient for the corpus.
+- **Sampling:** merges are learned from 2M lines randomly sampled
+  (`shuffle_input_sentence=True`) out of the full 14.6M. BPE merge frequencies
+  saturate quickly on a corpus this small and repetitive, so using more lines
+  doesn't meaningfully change the vocabulary.
+- **`max_sentence_length=8192`:** raised from the 4096-byte default so no full
+  stories are dropped during training. Only affects which lines contribute to
+  learning merges — `encode()` is never length-limited — and the extra memory
+  cost is trivial.
+- **`byte_fallback=True`:** unseen characters fall back to bytes, so the
+  tokenizer never emits `<unk>`.
+- **Special tokens:** `<|endoftext|>` is registered as a single user-defined
+  symbol (never split by BPE) and serves as the document / EOS boundary. Native
+  BOS/EOS are disabled — the model uses the `<|endoftext|>` id instead.
+
+Output: `spm.model` + `spm.vocab`.
+
+### 3. Preprocess / pack *(current)*
 Encode the whole corpus once to token IDs; write a flat `uint16` memmap per
 split (8k vocab fits `uint16`), inserting the EOS id between stories. nanoGPT
 pattern: pre-tokenize once, then sample random windows at train time.
