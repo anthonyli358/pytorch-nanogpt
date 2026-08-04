@@ -56,7 +56,7 @@ A SentencePiece BPE tokenizer trained on the TinyStories train split.
 
 Output: `spm.model` + `spm.vocab`.
 
-### 3. Preprocess / pack *(current)*
+### 3. Preprocess / pack ✓
 Encode the whole corpus once to token IDs; write a flat `uint16` memmap per
 split (8k vocab fits `uint16`), inserting the EOS id between stories. nanoGPT
 pattern: pre-tokenize once, then sample random windows at train time.
@@ -65,7 +65,21 @@ pattern: pre-tokenize once, then sample random windows at train time.
 
 Deliverable: `train.bin`, `val.bin`, `meta` (vocab size, EOS id).
 
-### 4. Model
+train: 530,386,257 tokens, 2,717,700 stories -> data\packed\train.bin
+valid: 5,355,994 tokens, 27,631 stories -> data\packed\val.bin
+
+=== train story token-length distribution ===
+p50:    173
+p90:    263
+p95:    364
+p99:    560
+max:   1646   mean:  194.2
+fraction of stories <= 256 tokens: 0.893
+
+256 is a good number for context length.
+
+
+### 4. Model *(current)*
 Decoder-only GPT. Prune the seq2seq transformer: keep `MultiHeadAttention`
 (with the causal mask from the old decoder self-attn), **drop cross-attention
 and the entire encoder**.

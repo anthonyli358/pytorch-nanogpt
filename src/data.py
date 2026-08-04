@@ -47,3 +47,33 @@ def download_data(data_dir: Path = DATA_DIR) -> dict[str, Path]:
         n, nbytes = summarise(path)
         print(f"{split}: {path}   ({n:,} stories, {nbytes / 1e6:.1f} MB)")
     return paths
+
+
+def read_stories(path: Path, marker: str = EOS_MARKER, limit: int | None = None):
+    """Stream stories from a raw split, splitting on the marker line.
+ 
+    Memory-safe: yields one story at a time rather than loading the file.
+ 
+    Args:
+        path: Raw .txt split.
+        marker: Document separator (a line equal to this ends a story).
+        limit: Stop after yielding this many stories, if given.
+ 
+    Yields:
+        Each story as a single string (internal newlines preserved).
+    """
+    story: list[str] = []
+    n = 0
+    with Path(path).open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip() == marker:
+                if story:
+                    yield "\n".join(story)
+                    story = []
+                    n += 1
+                    if limit and n >= limit:
+                        return
+            else:
+                story.append(line.rstrip("\n"))
+    if story:
+        yield "\n".join(story)
