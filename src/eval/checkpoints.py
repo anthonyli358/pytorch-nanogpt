@@ -14,12 +14,12 @@ def save_checkpoint(path: Path, model: GPT, optimizer, step: int,
     Bundles the model weights, optimizer state, step, best val loss, and the GPTConfig.
 
     Args:
-        path: Destination ``.pt`` file.
+        path: Destination .pt file.
         model: The model (compiled or raw).
         optimizer: The optimizer whose state to save.
         step: Current optimizer step.
         best_val: Best validation loss seen so far.
-        cfg: The model config, stored via ``asdict`` for a clean rebuild.
+        cfg: The model config, stored via asdict for a clean rebuild.
     """
     raw = getattr(model, "_orig_mod", model)   # unwrap compiled model for clean keys
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,12 +38,12 @@ def load_checkpoint(path: Path, device: str) -> tuple[GPT, dict]:
     No dependence on current config values.
 
     Args:
-        path: Checkpoint ``.pt`` file.
+        path: Checkpoint .pt file.
         device: Device to map tensors onto.
 
     Returns:
-        ``(model, ckpt)`` where ``model`` is on ``device`` with weights loaded,
-        and ``ckpt`` is the raw dict (for optimizer state, step, etc.).
+        (model, ckpt) where model is on device with weights loaded,
+        and ckpt is the raw dict (for optimizer state, step, etc.).
     """
     ckpt = torch.load(path, map_location=device)
     cfg = GPTConfig(**ckpt["cfg"])

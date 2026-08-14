@@ -61,7 +61,7 @@ EVAL_ITERS = 100  # batches averaged per eval
 LOG_INTERVAL = 20  # steps between train-loss logs
 
 CKPT_DIR = "checkpoints"
-RESUME = False  # resume from checkpoints/last.pt if present
+RESUME = True  # resume from checkpoints/last.pt if present
 
 
 # ----- Sampling ----

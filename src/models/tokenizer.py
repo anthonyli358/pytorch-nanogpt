@@ -22,15 +22,15 @@ class Tokenizer:
     """Thin wrapper around a trained SentencePiece model.
 
     Attributes:
-        eos_id: Id of the ``<|endoftext|>`` piece (document / EOS boundary).
-        pad_id: Id of the ``<pad>`` piece.
+        eos_id: Id of the <|endoftext|> piece (document / EOS boundary).
+        pad_id: Id of the <pad> piece.
     """
 
     def __init__(self, model_path: Path = MODEL_PATH):
         """Load a trained SentencePiece model.
 
         Args:
-            model_path: Path to the ``.model`` file produced by
+            model_path: Path to the .model file produced by
                 :func:`train_tokenizer`.
         """
         self.sp = spm.SentencePieceProcessor(model_file=str(model_path))
@@ -48,15 +48,15 @@ class Tokenizer:
         """Train a BPE model on the raw train text (or reuse a cached one) and load it.
 
         If a trained model already exists it is loaded as-is unless
-        ``overwrite`` is set, so this is safe to call unconditionally in a
+        overwrite is set, so this is safe to call unconditionally in a
         pipeline. Lines are subsampled and shuffled, so training does not read
         the full ~2GB corpus. `<|endoftext|>` is kept whole via
-        ``user_defined_symbols``.
+        user_defined_symbols.
 
         Args:
             input_path: Path to the raw train .txt file (stories separated by
-                ``<|endoftext|>`` lines).
-            tokenizer_dir: Directory to write ``spm.model`` and ``spm.vocab`` into.
+                <|endoftext|> lines).
+            tokenizer_dir: Directory to write spm.model and spm.vocab into.
             vocab_size: Target vocabulary size, including specials and the 256
                 byte-fallback pieces.
             overwrite: If True, retrain even when a cached model exists.
@@ -98,9 +98,9 @@ class Tokenizer:
 
         Args:
             text: Input string.
-            add_eos: If True, append the ``<|endoftext|>`` id. Appending the id
+            add_eos: If True, append the <|endoftext|> id. Appending the id
                 directly is intentional -- encoding the literal marker string
-                would pick up a leading ``add_dummy_prefix`` whitespace token.
+                would pick up a leading add_dummy_prefix whitespace token.
 
         Returns:
             List of token ids.

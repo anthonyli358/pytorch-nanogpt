@@ -40,13 +40,13 @@ def get_batch(split: str, block_size: int, batch_size: int, device: str) -> tupl
     mapping accumulates references across a long training run.
 
     Args:
-        split: ``"train"`` or ``"valid"``.
+        split: "train" or "valid".
         block_size: Window (context) length.
         batch_size: Number of windows.
         device: Target device.
 
     Returns:
-        ``(x, y)`` of shape ``(batch_size, block_size)``, where ``y`` is ``x``
+        (x, y) of shape (batch_size, block_size), where y is x
         shifted by one (next-token targets).
     """
     path = Path(PACKED_DIR) / PACKED_FILES[split]
@@ -93,7 +93,7 @@ def get_lr(step: int) -> float:
 
 @torch.no_grad()
 def estimate_loss(model: GPT, ctx, block_size: int, device: str) -> dict[str, float]:
-    """Average loss over ``EVAL_ITERS`` batches for each split."""
+    """Average loss over EVAL_ITERS batches for each split."""
     out = {}
     model.eval()
     for split in ("train", "valid"):
@@ -112,7 +112,7 @@ def train() -> None:
     """
     Run the training loop, evaluating and checkpointing periodically.
 
-    Samples random fixed-length windows straight off the ``uint16`` memmaps.
+    Samples random fixed-length windows straight off the uint16 memmaps.
 
     """
     torch.manual_seed(SEED)
