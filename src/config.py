@@ -61,8 +61,9 @@ EVAL_ITERS = 100  # batches averaged per eval
 LOG_INTERVAL = 20  # steps between train-loss logs
 
 CKPT_DIR = "checkpoints"
-RESUME = True  # resume from checkpoints/last.pt if present
-
+RESUME = True                # resume training from a prior run's last.pt
+RESUME_FROM = None            # None -> latest run dir; or a run dir / .pt path
+CKPT_RUN = None               # sample/evaluate: None -> latest run's best.pt; or a run dir / .pt path
 
 # ----- Sampling ----
 SAMPLE_PROMPTS = [
