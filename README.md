@@ -79,13 +79,15 @@ fraction of stories <= 256 tokens: 0.893
 256 is a good number for context length.
 
 
-### 4. Model *(current)*
+### 4. Model ✓
 Decoder-only GPT. Prune the seq2seq transformer: keep `MultiHeadAttention`
 (with the causal mask from the old decoder self-attn), **drop cross-attention
 and the entire encoder**.
 - token embedding + positional (learned absolute is fine; RoPE optional)
 - N pre-norm causal blocks (attn + MLP)
 - final norm + LM head, **weight-tied** to the embedding
+- lots of data vs training size, so overfitting is unlikely
+- 384/6 = 64, 64 is the universal choice for the attention heads
 
 Target size (~10M params): `d_model≈384`, `n_layer≈6`, `n_head≈6`, `ctx≈256`.
 
