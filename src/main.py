@@ -2,19 +2,23 @@ import torch
 import math
 
 from src.config import GPTConfig
-from src.data import download_data
-from src.tokenizer import Tokenizer
-from src.pack import pack_data
-from src.gpt import GPT
+from src.data.data import download_data
+from src.models.tokenizer import Tokenizer
+from src.data.pack import pack_data
+from src.models.gpt import GPT
 
 if __name__ == "__main__":
-    # download_data()
+    # --- Download Data ---
+    # download_data()  # already downloaded
+
+    # --- Prepare Tokenizer ---
     tokenizer = Tokenizer.train(overwrite=False)
     print(
         f"tokenizer ready: vocab_size={tokenizer.vocab_size}, eos_id={tokenizer.eos_id}"
     )
     pack_data(tokenizer)
- 
+
+    # --- Initialise a model, untrained ---
     torch.manual_seed(0)
     cfg = GPTConfig()
     model = GPT(cfg)

@@ -1,17 +1,3 @@
-"""Train the GPT on the packed TinyStories memmaps.
-
-Samples random fixed-length windows straight off the ``uint16`` memmaps,
-trains with AdamW (decoupled weight decay, split param groups), a cosine LR
-schedule with linear warmup, gradient accumulation, gradient clipping, and
-mixed-precision autocast. Checkpoints store the model, optimizer, step, best
-val loss, and the ``GPTConfig`` (via ``asdict``) so a resume rebuilds the exact
-architecture.
-
-The learning rate is a pure function of the step (:func:`get_lr`), so resuming
-from a checkpoint is automatically correct -- there is no scheduler state to
-save or restore, and warmup cannot be accidentally re-triggered.
-"""
-
 import json
 import math
 import time
@@ -28,10 +14,10 @@ from src.config import (
     BATCH_SIZE, GRAD_ACCUM_STEPS, MAX_STEPS, WARMUP_STEPS,
     LR, MIN_LR, WEIGHT_DECAY, BETA1, BETA2, GRAD_CLIP,
     EVAL_INTERVAL, EVAL_ITERS, LOG_INTERVAL,
-    CKPT_DIR, RESUME, CONTEXT_LEN,
+    CKPT_DIR, RESUME, CONTEXT_LEN, GPTConfig
 )
-from src.model import GPT, GPTConfig
-from src.checkpoints import save_checkpoint, load_checkpoint
+from src.models.gpt import GPT
+from src.eval.checkpoints import save_checkpoint, load_checkpoint
 
 _DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
 
@@ -90,7 +76,12 @@ def configure_optimizers(model: GPT, weight_decay: float, lr: float,
 
 
 def get_lr(step: int) -> float:
-    """Cosine schedule with linear warmup; a pure function of the step."""
+    """
+    Cosine schedule with linear warmup; a pure function of the step.
+    
+    Ensures resume from checkpoints happens correctly.
+    """
+    
     if step < WARMUP_STEPS:
         return LR * (step + 1) / WARMUP_STEPS
     if step >= MAX_STEPS:
@@ -118,7 +109,12 @@ def estimate_loss(model: GPT, ctx, block_size: int, device: str) -> dict[str, fl
 
 
 def train() -> None:
-    """Run the training loop, evaluating and checkpointing periodically."""
+    """
+    Run the training loop, evaluating and checkpointing periodically.
+
+    Samples random fixed-length windows straight off the ``uint16`` memmaps.
+
+    """
     torch.manual_seed(SEED)
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
@@ -171,14 +167,14 @@ def train() -> None:
         if step == MAX_STEPS:
             break
 
-        for _ in range(GRAD_ACCUM_STEPS):
+        for _ in range(GRAD_ACCUM_STEPS):  # gradient accumulation
             with ctx:
                 _, loss = model(x, y)
                 loss = loss / GRAD_ACCUM_STEPS
             x, y = get_batch("train", block_size, BATCH_SIZE, device)   # prefetch during backward
             scaler.scale(loss).backward()
 
-        if GRAD_CLIP > 0:
+        if GRAD_CLIP > 0:  # gradient clipping
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         scaler.step(optimizer)
@@ -189,7 +185,9 @@ def train() -> None:
             dt = time.time() - t0
             t0 = time.time()
             print(f"step {step:>6}: loss {loss.item() * GRAD_ACCUM_STEPS:.4f} | "
-                  f"lr {lr:.2e} | {dt / max(1, LOG_INTERVAL) * 1000:.0f} ms/step")
+                  f"lr {lr:.2e} | {dt / max(1, LOG_INTERVAL) * 1000:.0f} ms/step "
+                  f"| {step/MAX_STEPS:.1f}% of {MAX_STEPS}"
+                  )
 
     print(f"done. best val loss {best_val:.4f}. checkpoints in {CKPT_DIR}/")
 

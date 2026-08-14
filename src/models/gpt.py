@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from src.config import GPTConfig
-from src.nn_block import Block
+from src.models.nn_block import Block
 
 
 class GPT(nn.Module):
@@ -72,12 +72,14 @@ class GPT(nn.Module):
                 a position in the loss.
 
         Returns:
-            (logits, loss). 
-                With targets, logits is (B, T, vocab) and loss is the mean cross-entropy. 
+            (logits, loss).
+                With targets, logits is (B, T, vocab) and loss is the mean cross-entropy.
                 Without targets (inference), only the last position is computed.
         """
         B, T = idx.shape
-        assert T <= self.cfg.block_size, f"sequence length {T} > block size {self.cfg.block_size}"
+        assert (
+            T <= self.cfg.block_size
+        ), f"sequence length {T} > block size {self.cfg.block_size}"
         pos = torch.arange(T, device=idx.device)
         x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
         for block in self.blocks:
@@ -91,12 +93,18 @@ class GPT(nn.Module):
             )
             return logits, loss
 
-        logits = self.lm_head(x[:, [-1], :])   # only the last position is needed
+        logits = self.lm_head(x[:, [-1], :])  # only the last position is needed
         return logits, None
 
     @torch.no_grad()
-    def generate(self, idx: torch.Tensor, max_new_tokens: int,
-                 temperature: float = 1.0, top_k: int | None = None) -> torch.Tensor:
+    def generate(
+        self,
+        idx: torch.Tensor,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+        top_p: float | None = None,
+    ) -> torch.Tensor:
         """Autoregressively sample continuations (basic; top-p added in step 6).
 
         Args:
@@ -109,12 +117,28 @@ class GPT(nn.Module):
             idx extended by max_new_tokens columns.
         """
         for _ in range(max_new_tokens):
-            idx_cond = idx[:, -self.cfg.block_size:]     # crop to context window
+            idx_cond = idx[:, -self.cfg.block_size :]  # crop to context window
             logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] / temperature
+            logits = logits[:, -1, :]
+
+            if temperature <= 0.0:  # greedy
+                idx_next = logits.argmax(dim=-1, keepdim=True)
+                idx = torch.cat((idx, idx_next), dim=1)
+                continue
+
+            logits = logits / temperature
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("inf")
+            if top_p is not None:
+                sorted_logits, sorted_idx = torch.sort(logits, descending=True, dim=-1)
+                cum = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                remove = cum > top_p
+                remove[..., 1:] = remove[..., :-1].clone()  # keep first token past p
+                remove[..., 0] = False
+                remove = remove.scatter(-1, sorted_idx, remove)
+                logits = logits.masked_fill(remove, -float("inf"))
+
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)

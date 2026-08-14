@@ -91,21 +91,29 @@ and the entire encoder**.
 
 Target size (~10M params): `d_model≈384`, `n_layer≈6`, `n_head≈6`, `ctx≈256`.
 
-### 5. Training loop
+### 5. Training loop ✓
 Sample random windows from the memmap.
 - AdamW (betas 0.9/0.95, wd 0.1), cosine decay + linear warmup, grad clip 1.0
 - grad accumulation for effective batch; bf16 autocast on Ampere+
 - resumable checkpoints (save scheduler `state_dict` too), periodic val eval
 
-### 6. Sampling
+At batch 64 x accum 8 (gradient accumulation, it simiulates a large batch size when the GPU can't fit one, 
+run several smaller microbatches and sum the gradients and do optimizer step after accum) 
+x ctx (context length) 256 = 131 tokens/step, one epoch over 530M tokens is 4046 steps.
+The 10,000 MAX_STEPS is about 2.5 epochs
+
+### 6. Sampling ✓
 Autoregressive decode with temperature + top-k/top-p. Sampling, not beam
 search — this is open-ended generation. Prompt in → story out.
 
-### 7. Evaluation
+### 7. Evaluation ✓
 - **Val perplexity** — day-to-day workhorse metric.
 - **TinyStories rubric** (grammar / consistency / creativity, graded by a
   larger model) — the gold qualitative eval; wire up once samples are worth
   grading. Defer; perplexity + eyeballing gets most of the early signal.
+
+### 8. Speculative Decoding
+- How all the labs are speeding up token throughput today 
 
 ---
 

@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from src.config import GPTConfig
-from src.attention import CausalSelfAttention
+from src.models.attention import CausalSelfAttention
 
 
 class MLP(nn.Module):
