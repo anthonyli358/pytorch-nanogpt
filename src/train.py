@@ -256,7 +256,7 @@ def train() -> None:
             print(
                 f"step {step:>6}: loss {loss.item() * GRAD_ACCUM_STEPS:.4f} | "
                 f"lr {lr:.2e} | {dt / max(1, LOG_INTERVAL) * 1000:.0f} ms/step "
-                f"| {step/MAX_STEPS:.1f}% of {MAX_STEPS}"
+                f"| {(step/MAX_STEPS) * 100:.1f}% of {MAX_STEPS}"
             )
 
     print(f"done. best val loss {best_val:.4f}. checkpoints in {CKPT_DIR}/")
