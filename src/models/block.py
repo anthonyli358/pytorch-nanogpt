@@ -9,7 +9,10 @@ from src.models.attention import CausalSelfAttention
 
 
 class MLP(nn.Module):
-    """Position-wise feed-forward: Linear -> GELU -> Linear, 4x expansion."""
+    """
+    Position-wise feed-forward: Linear -> GELU -> Linear.
+    4x expansion on d_model to project the features into higher dimensions.
+    """
 
     def __init__(self, cfg: GPTConfig):
         super().__init__()
@@ -22,7 +25,9 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    """Pre-norm transformer block: x + attn(ln(x)), then x + mlp(ln(x))."""
+    """
+    Pre-norm transformer block: stacks x + attn(ln(x)), then x + mlp(ln(x)).
+    """
 
     def __init__(self, cfg: GPTConfig):
         super().__init__()
