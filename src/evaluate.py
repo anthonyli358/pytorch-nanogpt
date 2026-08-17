@@ -1,3 +1,12 @@
+"""Evaluate a trained checkpoint: validation loss and perplexity.
+
+Perplexity is ``exp(mean cross-entropy)`` -- the average per-token branching
+factor. Lower is better; a uniform model over the vocab would score ``vocab_size``.
+The sweep is deterministic: it walks non-overlapping windows across the whole
+split (not random batches), so the number is stable run to run.
+"""
+
+import json
 import math
 from contextlib import nullcontext
 from pathlib import Path
@@ -8,11 +17,14 @@ import torch
 from src.config import (
     PACKED_DIR,
     PACKED_FILES,
+    META_FILE,
     CONTEXT_LEN,
     CKPT_DIR,
+    CKPT_RUN,
     DEVICE,
     DTYPE,
     EVAL_BATCH_SIZE,
+    EVAL_MAX_BATCHES,
 )
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint
 
@@ -38,47 +50,62 @@ def resolve_device_dtype() -> tuple[str, torch.dtype]:
 
 @torch.no_grad()
 def evaluate_split(
-    model, split: str, block_size: int, batch_size: int, device: str, ctx
+    model,
+    split: str,
+    block_size: int,
+    batch_size: int,
+    device: str,
+    ctx,
+    max_batches: int | None = None,
 ) -> dict[str, float]:
-    """Token-weighted mean loss and perplexity over a whole split.
+    """Token-weighted mean loss and perplexity over a split.
 
-    Perplexity is exp(mean cross-entropy), lower is better.
-    It's the average per-token branching factor, so a uniform model would score = vocab_size.
+    With ``max_batches`` set, evaluates that many batches of windows spread
+    evenly across the whole split (a representative, deterministic subsample) --
+    far cheaper than a full sweep on the ~100x-larger train split. With None,
+    sweeps every non-overlapping window.
 
     Args:
         model: A model in eval mode.
-        split: "train" or`"valid".
+        split: ``"train"`` or ``"valid"``.
         block_size: Window length.
         batch_size: Windows per forward pass.
         device: Target device.
         ctx: Autocast context manager.
+        max_batches: Cap on batches, or None for the full sweep.
 
     Returns:
-        {"loss": ..., "perplexity": ...}.
+        ``{"loss": ..., "perplexity": ...}``.
     """
     data = np.memmap(Path(PACKED_DIR) / PACKED_FILES[split], dtype=np.uint16, mode="r")
     n_windows = (len(data) - 1) // block_size
+
+    n_select = n_windows
+    if max_batches is not None and max_batches * batch_size < n_windows:
+        n_select = max_batches * batch_size
+    # evenly spaced window indices across the whole split (deterministic, representative)
+    starts = np.linspace(0, n_windows - 1, n_select).astype(np.int64)
+
     total_loss = 0.0
     total_tokens = 0
-
-    for b0 in range(0, n_windows, batch_size):
-        idxs = range(b0, min(b0 + batch_size, n_windows))
+    for b0 in range(0, len(starts), batch_size):
+        sel = starts[b0 : b0 + batch_size]
         xb = torch.stack(
             [
                 torch.from_numpy(
-                    data[i * block_size : i * block_size + block_size].astype(np.int64)
+                    data[s * block_size : s * block_size + block_size].astype(np.int64)
                 )
-                for i in idxs
+                for s in sel
             ]
         )
         yb = torch.stack(
             [
                 torch.from_numpy(
-                    data[i * block_size + 1 : i * block_size + block_size + 1].astype(
+                    data[s * block_size + 1 : s * block_size + block_size + 1].astype(
                         np.int64
                     )
                 )
-                for i in idxs
+                for s in sel
             ]
         )
         xb, yb = xb.to(device), yb.to(device)
@@ -91,8 +118,7 @@ def evaluate_split(
     return {"loss": mean_loss, "perplexity": math.exp(mean_loss)}
 
 
-def evaluate() -> None:
-    """Evaluate a trained checkpoint: validation loss and perplexity."""
+def main() -> None:
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
     ctx = (
@@ -107,9 +133,11 @@ def evaluate() -> None:
     print(f"loaded {ckpt_path} (trained {ckpt['step']} steps)")
 
     for split in ("valid", "train"):
-        r = evaluate_split(model, split, CONTEXT_LEN, EVAL_BATCH_SIZE, device, ctx)
+        r = evaluate_split(
+            model, split, CONTEXT_LEN, EVAL_BATCH_SIZE, device, ctx, EVAL_MAX_BATCHES
+        )
         print(f"{split}: loss {r['loss']:.4f} | perplexity {r['perplexity']:.2f}")
 
 
 if __name__ == "__main__":
-    evaluate()
+    main()

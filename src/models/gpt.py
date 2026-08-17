@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from src.config import GPTConfig
-from src.models.nn_block import Block
+from src.models.block import Block
 
 
 class GPT(nn.Module):

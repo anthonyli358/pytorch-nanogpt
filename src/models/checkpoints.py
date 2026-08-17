@@ -33,7 +33,8 @@ def latest_run_dir(base: str = "checkpoints") -> Path | None:
     base_path = Path(base)
     if not base_path.exists():
         return None
-    runs = sorted(d for d in base_path.iterdir() if d.is_dir())
+    # only timestamp-named dirs (start with a digit) -- ignore stray subdirs
+    runs = sorted(d for d in base_path.iterdir() if d.is_dir() and d.name[:1].isdigit())
     return runs[-1] if runs else None
 
 

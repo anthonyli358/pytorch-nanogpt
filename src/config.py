@@ -77,4 +77,28 @@ TOP_K = 200
 TOP_P = 0.95
 
 # ----- Evaluation ----
-EVAL_BATCH_SIZE = 64  # batch size for the deterministic perplexity sweep
+# ----- Evaluation ----
+EVAL_BATCH_SIZE = 64          # batch size for the deterministic perplexity sweep
+EVAL_MAX_BATCHES = 200        # cap batches per split (None = full sweep); spread across the file
+ 
+# ----- SFT ----
+INSTRUCT_FILE_SETS = {
+    "train": "TinyStoriesInstruct-train.txt",
+    "valid": "TinyStoriesInstruct-valid.txt",
+}
+STORY_MARKER = "Story:"       # up to & incl. this = prompt (masked); after = response
+SFT_MAX_LEN = None            # cap example length in tokens; None -> model block_size
+MAX_SFT_EXAMPLES = None       # cap examples per split (None = all)
+ 
+SFT_INIT_RUN = None           # pretrained run to fine-tune from (None = latest)
+SFT_CKPT_DIR = "sft_checkpoints"   # separate from pretraining checkpoints/
+SFT_PATIENCE = 2              # early-stop after this many epochs without val improvement
+SFT_BATCH_SIZE = 32
+SFT_EPOCHS = 1
+SFT_LR = 3e-4                 # lower than pretraining peak (fine-tuning)
+SFT_MIN_LR = 3e-5
+SFT_WARMUP_STEPS = 100
+SFT_WEIGHT_DECAY = 0.1
+SFT_GRAD_CLIP = 1.0
+SFT_EVAL_INTERVAL = 500
+SFT_LOG_INTERVAL = 50
