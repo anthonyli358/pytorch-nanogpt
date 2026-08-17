@@ -109,12 +109,23 @@ The 10,000 MAX_STEPS is about 2.5 epochs
 Autoregressive decode with temperature + top-k/top-p. Sampling, not beam
 search — this is open-ended generation. Prompt in → story out.
 
+Dont need epochs because we sample by concatenating every story into only long 
+array and drawing a batch of random windows (sampling with replacement) from it, 
+so we only need MAX_STEPS. Since there's replacement, there's no epochs.
+
+We follow Kaparthy's minGPT https://github.com/karpathy/mingpt. 
+
+This makes it stateless and resuming is trivial and decoupled from dataset size.
+This makes for a simpler loader and doesn't matter for our use case.
+
+This also helps with some diversity since tokens get seen at differen positions.
+Where coverage matters and we can't afford to miss any data, we might want coverage guarantee.
+
 ### 7. Evaluation ✓
 - **Val perplexity** — day-to-day workhorse metric.
 - **TinyStories rubric** (grammar / consistency / creativity, graded by a
   larger model) — the gold qualitative eval; wire up once samples are worth
   grading. Defer; perplexity + eyeballing gets most of the early signal.
-
 
 ---
 
@@ -176,6 +187,8 @@ Make sure we can view the output sentences (like in generate_story.py) and the o
 A scalar reward head on the preference pairs via the Bradley-Terry loss.
 **Skip entirely** for verifiable-reward GRPO or DPO — both bypass it. Build
 only if you want the classic three-stage RLHF stack.
+
+Is this the reward model for RLHF + PPO e.g. an LLM judge which outputs a score?
 
 ### 12. PPO / GRPO
 Online RL — the hardest stage.

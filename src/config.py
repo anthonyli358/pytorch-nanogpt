@@ -129,7 +129,7 @@ DPO_MAX_LEN = None                  # cap example length in tokens; None -> mode
 DPO_VAL_FRACTION = 0.05             # fraction of pairs held out for val loss / reward accuracy
 DPO_BETA = 0.1                      # KL strength in the DPO objective (higher = stay closer to ref)
 DPO_BATCH_SIZE = 16                 # pairs per step (2x sequences forwarded: chosen + rejected)
-DPO_EPOCHS = 1
+DPO_EPOCHS = 3                      # small pair set; 1 is thin. Watch for margin blow-up (over-opt) past ~2-3
 DPO_LR = 1e-5                       # DPO is sensitive; well below the SFT peak
 DPO_MIN_LR = 1e-6
 DPO_WARMUP_STEPS = 50
@@ -137,3 +137,14 @@ DPO_WEIGHT_DECAY = 0.0
 DPO_GRAD_CLIP = 1.0
 DPO_LOG_INTERVAL = 20
 DPO_PATIENCE = 2                    # early-stop after this many epochs without val improvement
+
+# ----- Post-training eval (step 13: win-rate vs SFT + KL from reference) -----
+# On HELD-OUT instruct-valid prompts (not the train prompts pairs were made from),
+# sample from SFT and DPO, score with the verifiable reward, and compare.
+WINRATE_SFT_RUN = None              # SFT baseline run (None = latest under SFT_CKPT_DIR)
+WINRATE_DPO_RUN = None              # DPO run to grade (None = latest under DPO_CKPT_DIR)
+WINRATE_NUM_PROMPTS = 500           # held-out valid prompts (with a Words: field) to evaluate
+WINRATE_SAMPLES_PER_PROMPT = 4      # completions per prompt per model; mean reward is the per-prompt score
+WINRATE_LOG_EVERY = 50             # progress print every N prompts
+WINRATE_SEED = 1234                # eval-only seed (held-out prompts, distinct from PREF_SEED)
+WINRATE_RESULTS_FILE = "winrate.json"  # written into the DPO run dir
