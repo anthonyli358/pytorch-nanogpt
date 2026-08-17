@@ -21,14 +21,35 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.config import (
-    DATA_DIR, CKPT_DIR, SFT_CKPT_DIR, SFT_INIT_RUN,
-    SFT_BATCH_SIZE, SFT_EPOCHS, SFT_LR, SFT_MIN_LR, SFT_WARMUP_STEPS,
-    SFT_WEIGHT_DECAY, SFT_GRAD_CLIP, SFT_LOG_INTERVAL, SFT_PATIENCE,
-    SFT_MAX_LEN, MAX_SFT_EXAMPLES, BETA1, BETA2, SEED, DEVICE, DTYPE,
+    DATA_DIR,
+    CKPT_DIR,
+    SFT_CKPT_DIR,
+    SFT_INIT_RUN,
+    SFT_BATCH_SIZE,
+    SFT_EPOCHS,
+    SFT_LR,
+    SFT_MIN_LR,
+    SFT_WARMUP_STEPS,
+    SFT_WEIGHT_DECAY,
+    SFT_GRAD_CLIP,
+    SFT_LOG_INTERVAL,
+    SFT_PATIENCE,
+    SFT_LOG_INTERVAL,
+    SFT_MAX_LEN,
+    MAX_SFT_EXAMPLES,
+    BETA1,
+    BETA2,
+    SEED,
 )
-from src.models.checkpoints import load_checkpoint, save_checkpoint, new_run_dir, resolve_checkpoint
+from src.models.checkpoints import (
+    load_checkpoint,
+    save_checkpoint,
+    new_run_dir,
+    resolve_checkpoint,
+)
 from src.models.tokenizer import Tokenizer
 from src.data.sft_data import download_instruct, SFTDataset, pad_batch
+from src.eval.metrics import log_metrics, plot_losses
 from src.train import configure_optimizers, resolve_device_dtype
 
 
@@ -53,7 +74,7 @@ def evaluate_sft(model, loader: DataLoader, ctx, device: str) -> float:
         x, y = x.to(device), y.to(device)
         with ctx:
             _, loss = model(x, y)
-        n = int((y != -1).sum().item())      # unmasked (response) target tokens
+        n = int((y != -1).sum().item())  # unmasked (response) target tokens
         total_loss += loss.item() * n
         total_tokens += n
     model.train()
@@ -65,16 +86,23 @@ def train_sft() -> None:
     torch.manual_seed(SEED)
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
-    ctx = (torch.autocast(device_type=device_type, dtype=pt_dtype)
-           if pt_dtype is not torch.float32 else nullcontext())
+    ctx = (
+        torch.autocast(device_type=device_type, dtype=pt_dtype)
+        if pt_dtype is not torch.float32
+        else nullcontext()
+    )
     scaler = torch.amp.GradScaler(device_type, enabled=(pt_dtype is torch.float16))
 
     # Init from the pretrained checkpoint.
     init_ckpt = resolve_checkpoint(SFT_INIT_RUN, "best.pt", CKPT_DIR)
     model, _ = load_checkpoint(init_ckpt, device)
     cfg = model.cfg
-    optimizer = configure_optimizers(model, SFT_WEIGHT_DECAY, SFT_LR, (BETA1, BETA2), device)
-    print(f"SFT init from {init_ckpt} ({model.num_params():,} non-embedding params) on {device}")
+    optimizer = configure_optimizers(
+        model, SFT_WEIGHT_DECAY, SFT_LR, (BETA1, BETA2), device
+    )
+    print(
+        f"SFT init from {init_ckpt} ({model.num_params():,} non-embedding params) on {device}"
+    )
 
     # Data: examples are filtered to fit the context (never truncated).
     tok = Tokenizer()
@@ -83,14 +111,20 @@ def train_sft() -> None:
     train_ds = SFTDataset(paths["train"], tok, max_len, MAX_SFT_EXAMPLES)
     val_ds = SFTDataset(paths["valid"], tok, max_len)
     collate = partial(pad_batch, pad_id=tok.pad_id)
-    train_loader = DataLoader(train_ds, batch_size=SFT_BATCH_SIZE, shuffle=True, collate_fn=collate)
-    val_loader = DataLoader(val_ds, batch_size=SFT_BATCH_SIZE, shuffle=False, collate_fn=collate)
+    train_loader = DataLoader(
+        train_ds, batch_size=SFT_BATCH_SIZE, shuffle=True, collate_fn=collate
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=SFT_BATCH_SIZE, shuffle=False, collate_fn=collate
+    )
 
     total_steps = len(train_loader) * SFT_EPOCHS
     run_dir = new_run_dir(SFT_CKPT_DIR)
     best_path, last_path = run_dir / "best.pt", run_dir / "last.pt"
-    print(f"run dir: {run_dir} | {len(train_ds):,} train / {len(val_ds):,} val examples | "
-          f"{total_steps:,} steps")
+    print(
+        f"run dir: {run_dir} | {len(train_ds):,} train / {len(val_ds):,} val examples | "
+        f"{total_steps:,} steps"
+    )
 
     best_val = float("inf")
     no_improve = 0
@@ -99,6 +133,7 @@ def train_sft() -> None:
     start = time.time()
 
     for epoch in range(1, SFT_EPOCHS + 1):
+        ep_loss_sum, ep_steps = 0.0, 0
         for x, y in train_loader:
             lr = sft_get_lr(global_step, total_steps)
             for group in optimizer.param_groups:
@@ -107,6 +142,8 @@ def train_sft() -> None:
             x, y = x.to(device), y.to(device)
             with ctx:
                 _, loss = model(x, y)
+            ep_loss_sum += loss.item()
+            ep_steps += 1
             scaler.scale(loss).backward()
             if SFT_GRAD_CLIP > 0:
                 scaler.unscale_(optimizer)
@@ -116,11 +153,26 @@ def train_sft() -> None:
             optimizer.zero_grad(set_to_none=True)
 
             if global_step % SFT_LOG_INTERVAL == 0:
-                print(f"epoch {epoch} step {global_step:>6}: loss {loss.item():.4f} | lr {lr:.2e}")
+                print(
+                    f"epoch {epoch} step {global_step:>6}: loss {loss.item():.4f} | lr {lr:.2e}"
+                )
             global_step += 1
 
         val_loss = evaluate_sft(model, val_loader, ctx, device)
-        print(f"epoch {epoch}: val {val_loss:.4f} | {(time.time() - start) / 60:.1f} min")
+        train_loss = ep_loss_sum / max(1, ep_steps)
+        print(
+            f"epoch {epoch}: train {train_loss:.4f} | val {val_loss:.4f} | {(time.time() - start) / 60:.1f} min"
+        )
+        log_metrics(
+            run_dir,
+            {
+                "epoch": epoch,
+                "step": global_step,
+                "train_loss": round(train_loss, 4),
+                "val_loss": round(val_loss, 4),
+                "lr": lr,
+            },
+        )
 
         if val_loss < best_val:
             best_val = val_loss
@@ -134,7 +186,11 @@ def train_sft() -> None:
                 break
         save_checkpoint(last_path, model, optimizer, global_step, best_val, cfg)
 
-    print(f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/")
+    png = plot_losses(run_dir, x="epoch")
+    print(
+        f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/"
+        + (f" (curve: {png})" if png else "")
+    )
 
 
 if __name__ == "__main__":

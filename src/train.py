@@ -42,6 +42,7 @@ from src.models.checkpoints import (
     new_run_dir,
     latest_run_dir,
 )
+from src.eval.metrics import log_metrics, plot_losses
 
 _DTYPES = {
     "float32": torch.float32,
@@ -162,104 +163,88 @@ def train() -> None:
     torch.manual_seed(SEED)
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
-    ctx = (
-        torch.autocast(device_type=device_type, dtype=pt_dtype)
-        if pt_dtype is not torch.float32
-        else nullcontext()
-    )
+    ctx = (torch.autocast(device_type=device_type, dtype=pt_dtype)
+           if pt_dtype is not torch.float32 else nullcontext())
     scaler = torch.amp.GradScaler(device_type, enabled=(pt_dtype is torch.float16))
-
+ 
     meta = json.loads((Path(PACKED_DIR) / META_FILE).read_text())
     block_size = CONTEXT_LEN
-
+ 
     best_val = float("inf")
     start_step = 0
-
+ 
     resume_dir = None
     if RESUME:
         p = Path(RESUME_FROM) if RESUME_FROM else latest_run_dir(CKPT_DIR)
         if p is not None:
             resume_dir = p.parent if p.suffix == ".pt" else p
-
+ 
     if resume_dir is not None and (resume_dir / "last.pt").exists():
         run_dir = resume_dir
         model, ckpt = load_checkpoint(run_dir / "last.pt", device)
         cfg = model.cfg
-        optimizer = configure_optimizers(
-            model, WEIGHT_DECAY, LR, (BETA1, BETA2), device
-        )
+        optimizer = configure_optimizers(model, WEIGHT_DECAY, LR, (BETA1, BETA2), device)
         optimizer.load_state_dict(ckpt["optimizer"])
         start_step = ckpt["step"] + 1
         best_val = ckpt["best_val_loss"]
-        print(
-            f"resumed {run_dir}/last.pt at step {start_step} (best_val {best_val:.4f})"
-        )
+        print(f"resumed {run_dir}/last.pt at step {start_step} (best_val {best_val:.4f})")
     else:
         run_dir = new_run_dir(CKPT_DIR)
         cfg = GPTConfig(vocab_size=meta["vocab_size"], block_size=block_size)
         model = GPT(cfg).to(device)
-        optimizer = configure_optimizers(
-            model, WEIGHT_DECAY, LR, (BETA1, BETA2), device
-        )
-        print(
-            f"fresh model: {model.num_params():,} non-embedding params on {device} ({pt_dtype})"
-        )
+        optimizer = configure_optimizers(model, WEIGHT_DECAY, LR, (BETA1, BETA2), device)
+        print(f"fresh model: {model.num_params():,} non-embedding params on {device} ({pt_dtype})")
         print(f"run dir: {run_dir}")
-
+ 
     best_path = run_dir / "best.pt"
     last_path = run_dir / "last.pt"
-
+ 
     if COMPILE:
         model = torch.compile(model)
-
+ 
     model.train()
-    x, y = get_batch("train", block_size, BATCH_SIZE, device)  # prefetch first batch
+    x, y = get_batch("train", block_size, BATCH_SIZE, device)   # prefetch first batch
     t0 = time.time()
-
+ 
     for step in range(start_step, MAX_STEPS + 1):
         lr = get_lr(step)
         for group in optimizer.param_groups:
             group["lr"] = lr
-
+ 
         if step % EVAL_INTERVAL == 0:
             losses = estimate_loss(model, ctx, block_size, device)
-            print(
-                f"step {step:>6}: train {losses['train']:.4f} | val {losses['valid']:.4f} | lr {lr:.2e}"
-            )
+            print(f"step {step:>6}: train {losses['train']:.4f} | val {losses['valid']:.4f} | lr {lr:.2e}")
+            log_metrics(run_dir, {"step": step, "train_loss": round(losses["train"], 4), "val_loss": round(losses["valid"], 4), "lr": lr})
             if losses["valid"] < best_val:
                 best_val = losses["valid"]
                 save_checkpoint(best_path, model, optimizer, step, best_val, cfg)
             save_checkpoint(last_path, model, optimizer, step, best_val, cfg)
-
+ 
         if step == MAX_STEPS:
             break
-
+ 
         for _ in range(GRAD_ACCUM_STEPS):
             with ctx:
                 _, loss = model(x, y)
                 loss = loss / GRAD_ACCUM_STEPS
-            x, y = get_batch(
-                "train", block_size, BATCH_SIZE, device
-            )  # prefetch during backward
+            x, y = get_batch("train", block_size, BATCH_SIZE, device)   # prefetch during backward
             scaler.scale(loss).backward()
-
+ 
         if GRAD_CLIP > 0:
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
-
+ 
         if step % LOG_INTERVAL == 0:
             dt = time.time() - t0
             t0 = time.time()
-            print(
-                f"step {step:>6}: loss {loss.item() * GRAD_ACCUM_STEPS:.4f} | "
-                f"lr {lr:.2e} | {dt / max(1, LOG_INTERVAL) * 1000:.0f} ms/step "
-                f"| {(step/MAX_STEPS) * 100:.1f}% of {MAX_STEPS}"
-            )
-
-    print(f"done. best val loss {best_val:.4f}. checkpoints in {CKPT_DIR}/")
+            print(f"step {step:>6}: loss {loss.item() * GRAD_ACCUM_STEPS:.4f} | "
+                  f"lr {lr:.2e} | {dt / max(1, LOG_INTERVAL) * 1000:.0f} ms/step")
+ 
+    png = plot_losses(run_dir, x="step")
+    print(f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/" + (f" (curve: {png})" if png else ""))
 
 
 if __name__ == "__main__":
