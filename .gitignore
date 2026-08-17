@@ -220,3 +220,4 @@ __marimo__/
 # Project files
 /data/
 checkpoints/
+sft_checkpoints/

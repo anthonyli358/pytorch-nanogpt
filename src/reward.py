@@ -39,12 +39,18 @@ def parse_instruction(prompt: str) -> dict:
 
 
 def word_inclusion(story: str, words: list[str]) -> float:
-    """Fraction of required words present in the story (lenient prefix match)."""
-    if not words:
+    """Fraction of required words present in the story (lenient prefix match).
+
+    Each distinct word counts once (set semantics), so neither a duplicate entry
+    in the ``Words:`` list nor repeating a word in the story changes the score --
+    presence is boolean per required word.
+    """
+    unique = set(words)
+    if not unique:
         return 0.0
     text = story.lower()
-    hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}", text))
-    return hits / len(words)
+    hits = sum(1 for w in unique if re.search(rf"\b{re.escape(w)}", text))
+    return hits / len(unique)
 
 
 def verifiable_reward(prompt: str, story: str) -> float | None:

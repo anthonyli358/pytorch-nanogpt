@@ -105,3 +105,35 @@ SFT_WEIGHT_DECAY = 0.1
 SFT_GRAD_CLIP = 1.0
 SFT_EVAL_INTERVAL = 500
 SFT_LOG_INTERVAL = 50
+
+# ----- Preference generation (step 9 -> DPO pairs) -----
+# Sample K completions per instruct prompt, score each with the verifiable
+# reward, and emit (prompt, chosen, rejected) when there is a reward spread.
+DPO_DATA_DIR = "data/dpo"
+PAIRS_FILE = "pairs.jsonl"          # -> data/dpo/pairs.jsonl
+PREF_INIT_RUN = None                # SFT run to sample from (None = latest under SFT_CKPT_DIR)
+PREF_NUM_PROMPTS = 5000             # instruct-train prompts (with a Words: field) to sample from
+PREF_SAMPLES_PER_PROMPT = 4         # K completions per prompt
+PREF_TEMPERATURE = 1.0              # > 0 for diversity across the K samples
+PREF_TOP_K = 200
+PREF_TOP_P = 0.95
+PREF_MAX_NEW_TOKENS = 256           # upper cap on new tokens; actual = min(this, block_size - prompt_len)
+PREF_MIN_NEW_TOKENS = 48            # skip a prompt if the remaining context leaves less room than this
+PREF_LOG_EVERY = 200               # progress print every N prompts processed
+PREF_SEED = 1337
+
+# ----- DPO (step 10) -----
+DPO_CKPT_DIR = "dpo_checkpoints"    # separate from SFT / pretraining checkpoints
+DPO_INIT_RUN = None                 # SFT run to init policy + frozen reference from (None = latest)
+DPO_MAX_LEN = None                  # cap example length in tokens; None -> model block_size
+DPO_VAL_FRACTION = 0.05             # fraction of pairs held out for val loss / reward accuracy
+DPO_BETA = 0.1                      # KL strength in the DPO objective (higher = stay closer to ref)
+DPO_BATCH_SIZE = 16                 # pairs per step (2x sequences forwarded: chosen + rejected)
+DPO_EPOCHS = 1
+DPO_LR = 1e-5                       # DPO is sensitive; well below the SFT peak
+DPO_MIN_LR = 1e-6
+DPO_WARMUP_STEPS = 50
+DPO_WEIGHT_DECAY = 0.0
+DPO_GRAD_CLIP = 1.0
+DPO_LOG_INTERVAL = 20
+DPO_PATIENCE = 2                    # early-stop after this many epochs without val improvement

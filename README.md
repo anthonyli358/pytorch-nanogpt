@@ -20,6 +20,9 @@ Steps are ordered by dependency. Two numbers ripple through everything from
 step 3 onward and should be pinned in config early: **vocab size (8k)** and
 **context length (256)**.
 
+We use decoder only because story generation isn't sequence to sequence generation, 
+its continuation. There's no clean input -> output, they're the same stream of text.
+
 ---
 
 ## Part I — Pretraining
@@ -112,8 +115,6 @@ search — this is open-ended generation. Prompt in → story out.
   larger model) — the gold qualitative eval; wire up once samples are worth
   grading. Defer; perplexity + eyeballing gets most of the early signal.
 
-### 8. Speculative Decoding
-- How all the labs are speeding up token throughput today 
 
 ---
 
@@ -138,14 +139,17 @@ next-token loss, masked to the response span.
 Does two jobs: a prompt-following model, **and** the reference policy every
 later RL/DPO stage regularizes against. Deliverable: `sft.pt`.
 
-### 9. Reward / preference design
+### 9. Reward / preference design ✓
 The pivot everything downstream depends on. Three sources, cheapest first:
 - **Verifiable / programmatic** — did the story contain the required words?
   match the summary length? include the feature? Zero models, zero labels.
   Cleanest fit for GRPO; the recommended starting point.
 - **LLM-as-judge (RLAIF)** — score the rubric with a bigger model. Noisier,
-  slower, captures quality the checks can't.
+  slower, captures quality the checks can't. Skip this to save costs - have done
+  a lot of LLM judge work in evals.
 - **Trained reward model** — only for the classic PPO/RLHF path (step 11).
+
+Remove the incentive to repeat (set) and other reward hackable methods.
 
 ### 10. DPO
 Do this **before** any online RL. Needs preference pairs `(chosen, rejected)`:
@@ -154,6 +158,20 @@ No reward model, no sampling loop, no critic — a classification-style loss
 against the frozen SFT reference, KL baked into the objective. Most stable,
 easiest to debug. Deliverable: `dpo.pt`.
 
+**Preference pairs** (`make_preferences.py`, finishes step 9): load the SFT
+checkpoint and, for each instruct prompt with a `Words:` field, sample K
+completions at temperature > 0, score each with `verifiable_reward`, and emit
+`(prompt, chosen, rejected)` on a reward spread (ties skipped — no signal).
+Saved to `data/dpo/pairs.jsonl`.
+
+**Training** (`dpo_train.py`): policy init from SFT, a frozen reference clone of
+SFT, a `sequence_logprob` helper (summed response-token log-probs, reusing the
+SFT prompt masking), the `-log σ(β·[...])` objective, and checkpoints to
+`dpo_checkpoints/`. Reuses the optimizer / scheduler / checkpoint machinery.
+Diagnostics: reward accuracy (policy prefers chosen) and the reward margin.
+
+Make sure we can view the output sentences (like in generate_story.py) and the overall eval of it.
+
 ### 11. Reward model *(only for the RLHF/PPO path)*
 A scalar reward head on the preference pairs via the Bradley-Terry loss.
 **Skip entirely** for verifiable-reward GRPO or DPO — both bypass it. Build
@@ -161,11 +179,17 @@ only if you want the classic three-stage RLHF stack.
 
 ### 12. PPO / GRPO
 Online RL — the hardest stage.
+
+We can't RL our way to behaviours the policy has zero proablity of producing.
+It only sharpens the existing distribution (which is why we SFT first - in this case on instruct).
+
 - **PPO** — classic RLHF workhorse but heavy: policy + value/critic + reward
   model + frozen reference all resident, and finicky to stabilize.
 - **GRPO** — drops the value network; samples a *group* of completions per
   prompt and normalizes each reward against the group mean/std for the
   advantage. Lighter (no critic), pairs perfectly with verifiable rewards.
+
+Apply a KL penalty on the objective, and GAE for the advantage. 
 
 **Recommended:** GRPO with verifiable rewards. Treat PPO as optional "build the
 full classic stack for the education."
@@ -175,6 +199,8 @@ Three things, not one number:
 - **Win-rate** vs the SFT baseline (verifiable pass-rate or judge preference)
 - **KL from the reference** — catch over-optimization
 - **Regression check** — base capability (perplexity, grammar) didn't collapse
+- **Spot checks** - eyeball outputs from Base, SFT, DPO, PPO, GRPO
+- **Speculative Decoding** - implement and try, its how all the labs are speeding up token throughput today 
 
 Watch for **reward hacking**: an "include these words" reward will teach the
 model to cram words in ungrammatically — pass-rate climbs while stories get
