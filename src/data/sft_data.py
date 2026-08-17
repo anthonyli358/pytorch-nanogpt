@@ -16,25 +16,20 @@ from huggingface_hub import hf_hub_download
 from torch.utils.data import Dataset
 
 from src.config import (
-    REPO_ID,
-    OUT_DIR,
-    EOS_MARKER,
-    INSTRUCT_FILE_SETS,
-    STORY_MARKER,
-    MAX_SFT_EXAMPLES,
+    INSTRUCT_REPO_ID, DATA_DIR, EOS_MARKER, INSTRUCT_FILE_SETS, STORY_MARKER,
+    MAX_SFT_EXAMPLES, SFT_BUILD_LOG_EVERY,
 )
 from src.models.tokenizer import Tokenizer
 
 
-def download_instruct(out_dir: str = OUT_DIR) -> dict[str, Path]:
+def download_instruct(data_dir: str = DATA_DIR) -> dict[str, Path]:
     """Download the raw TinyStories-Instruct splits; return {split: path}."""
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
     paths = {}
     for split, fname in INSTRUCT_FILE_SETS.items():
         print(f"downloading {fname} ...")
-        local = hf_hub_download(
-            repo_id=REPO_ID, filename=fname, repo_type="dataset", local_dir=out_dir
-        )
+        local = hf_hub_download(repo_id=INSTRUCT_REPO_ID, filename=fname,
+                                repo_type="dataset", local_dir=data_dir)
         paths[split] = Path(local)
     return paths
 
@@ -67,7 +62,11 @@ def _emit(block: list[str]):
 
 
 def build_example(tok: Tokenizer, prompt: str, response: str, max_len: int):
-    """Tokenize one pair into ``(input_ids, labels)`` with the prompt masked.
+    """Tokenize one pair into ``(input_ids, labels)`` for next-token prediction.
+
+    The model predicts the token *after* each position, so targets are shifted:
+    ``input_ids = full[:-1]``, ``labels = full[1:]``. Targets that fall in the
+    prompt span are masked to ``-1`` so the loss covers only the response (+EOS).
 
     Returns None if the example exceeds ``max_len`` (dropped rather than
     truncated, so the model only ever sees complete stories).
@@ -76,44 +75,42 @@ def build_example(tok: Tokenizer, prompt: str, response: str, max_len: int):
     response_ids = tok.encode(response) + [tok.eos_id]
     if len(prompt_ids) + len(response_ids) > max_len:
         return None
-    input_ids = prompt_ids + response_ids
-    labels = [-1] * len(prompt_ids) + response_ids  # mask the prompt span
+    full = prompt_ids + response_ids
+    input_ids = full[:-1]
+    labels = full[1:]
+    for j in range(len(prompt_ids) - 1):   # mask targets that predict a prompt token
+        labels[j] = -1
     return input_ids, labels
 
 
 class SFTDataset(Dataset):
     """Pre-tokenized (input_ids, labels) examples with the prompt masked."""
 
-    def __init__(
-        self,
-        path: Path,
-        tok: Tokenizer,
-        max_len: int,
-        max_examples: int | None = MAX_SFT_EXAMPLES,
-    ):
+    def __init__(self, path: Path, tok: Tokenizer, max_len: int,
+                 max_examples: int | None = MAX_SFT_EXAMPLES):
         self.examples: list[tuple[list[int], list[int]]] = []
-        kept = skipped = 0
+        kept = skipped = seen = 0
+        print(f"building SFT dataset from {Path(path).name} (tokenizing full split) ...")
         for prompt, response in parse_records(path):
             ex = build_example(tok, prompt, response, max_len)
+            seen += 1
             if ex is None:
                 skipped += 1
-                continue
-            self.examples.append(ex)
-            kept += 1
+            else:
+                self.examples.append(ex)
+                kept += 1
+            if seen % SFT_BUILD_LOG_EVERY == 0:
+                print(f"  ...{seen:,} records processed ({kept:,} kept, {skipped:,} dropped)")
             if max_examples and kept >= max_examples:
                 break
-        print(
-            f"{Path(path).name}: {kept:,} examples kept, {skipped:,} dropped (> {max_len} tokens)"
-        )
+        print(f"{Path(path).name}: {kept:,} examples kept, {skipped:,} dropped (> {max_len} tokens)")
 
     def __len__(self) -> int:
         return len(self.examples)
 
     def __getitem__(self, idx: int):
         input_ids, labels = self.examples[idx]
-        return torch.tensor(input_ids, dtype=torch.long), torch.tensor(
-            labels, dtype=torch.long
-        )
+        return torch.tensor(input_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
 
 
 def pad_batch(batch, pad_id: int):

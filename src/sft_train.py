@@ -21,14 +21,14 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.config import (
-    OUT_DIR, CKPT_DIR, SFT_CKPT_DIR, SFT_INIT_RUN,
+    DATA_DIR, CKPT_DIR, SFT_CKPT_DIR, SFT_INIT_RUN,
     SFT_BATCH_SIZE, SFT_EPOCHS, SFT_LR, SFT_MIN_LR, SFT_WARMUP_STEPS,
     SFT_WEIGHT_DECAY, SFT_GRAD_CLIP, SFT_LOG_INTERVAL, SFT_PATIENCE,
     SFT_MAX_LEN, MAX_SFT_EXAMPLES, BETA1, BETA2, SEED, DEVICE, DTYPE,
 )
-from src.checkpoints import load_checkpoint, save_checkpoint, new_run_dir, resolve_checkpoint
-from src.tokenizer import Tokenizer
-from src.sft_data import download_instruct, SFTDataset, pad_batch
+from src.models.checkpoints import load_checkpoint, save_checkpoint, new_run_dir, resolve_checkpoint
+from src.models.tokenizer import Tokenizer
+from src.data.sft_data import download_instruct, SFTDataset, pad_batch
 from src.train import configure_optimizers, resolve_device_dtype
 
 
@@ -79,7 +79,7 @@ def train_sft() -> None:
     # Data: examples are filtered to fit the context (never truncated).
     tok = Tokenizer()
     max_len = min(SFT_MAX_LEN or cfg.block_size, cfg.block_size)
-    paths = download_instruct(OUT_DIR)
+    paths = download_instruct(DATA_DIR)
     train_ds = SFTDataset(paths["train"], tok, max_len, MAX_SFT_EXAMPLES)
     val_ds = SFTDataset(paths["valid"], tok, max_len)
     collate = partial(pad_batch, pad_id=tok.pad_id)

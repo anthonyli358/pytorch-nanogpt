@@ -82,13 +82,16 @@ EVAL_BATCH_SIZE = 64          # batch size for the deterministic perplexity swee
 EVAL_MAX_BATCHES = 200        # cap batches per split (None = full sweep); spread across the file
  
 # ----- SFT ----
+INSTRUCT_REPO_ID = "roneneldan/TinyStoriesInstruct"   # separate repo from the base data
 INSTRUCT_FILE_SETS = {
-    "train": "TinyStoriesInstruct-train.txt",
-    "valid": "TinyStoriesInstruct-valid.txt",
+    "train": "TinyStories-Instruct-train.txt",
+    "valid": "TinyStories-Instruct-valid.txt",
 }
 STORY_MARKER = "Story:"       # up to & incl. this = prompt (masked); after = response
 SFT_MAX_LEN = None            # cap example length in tokens; None -> model block_size
 MAX_SFT_EXAMPLES = None       # cap examples per split (None = all)
+SFT_BUILD_LOG_EVERY = 500_000 # progress print every N records while tokenizing the split
+
  
 SFT_INIT_RUN = None           # pretrained run to fine-tune from (None = latest)
 SFT_CKPT_DIR = "sft_checkpoints"   # separate from pretraining checkpoints/

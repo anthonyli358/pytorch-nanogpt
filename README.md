@@ -128,7 +128,7 @@ just PPO minus the critic. Learning-optimal path:
 **SFT → DPO → GRPO(verifiable)**, adding the reward model + PPO last only for
 the full classic stack.
 
-### 8. SFT (instruction format)
+### 8. SFT (instruction format) ✓
 Teach the base model a lightweight instruction schema. Use
 `TinyStories-Instruct` — stories prefaced with constraints (required words,
 summary, feature flags: dialogue / bad ending / moral / plot twist).
