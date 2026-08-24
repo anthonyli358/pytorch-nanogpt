@@ -47,7 +47,7 @@ from src.config import (
     SEED,
 )
 from src.data.dpo_data import DPODataset, dpo_collate
-from src.eval.metrics import log_metrics, plot_losses
+from src.eval.metrics import log_metrics, plot_series
 from src.models.checkpoints import (
     load_checkpoint,
     save_checkpoint,
@@ -180,6 +180,13 @@ def train_dpo() -> None:
                     f"loss {loss.item():.4f} | acc {acc.item():.3f} | "
                     f"margin {margin.item():+.3f} | lr {lr:.2e}"
                 )
+                log_metrics(run_dir, {
+                    "step": global_step,
+                    "loss": round(loss.item(), 4),
+                    "acc": round(acc.item(), 4),
+                    "margin": round(margin.item(), 4),
+                    "lr": lr,
+                })
             global_step += 1
 
         train_loss = ep_loss_sum / max(1, ep_steps)
@@ -195,19 +202,6 @@ def train_dpo() -> None:
             f"val loss {val_loss:.4f} acc {val_acc:.3f} margin {val_margin:+.3f} | "
             f"{(time.time() - start) / 60:.1f} min"
         )
-        log_metrics(
-            run_dir,
-            {
-                "epoch": epoch,
-                "step": global_step,
-                "train_loss": round(train_loss, 4),
-                "val_loss": round(val_loss, 4),
-                "val_acc": round(val_acc, 4),
-                "val_margin": round(val_margin, 4),
-                "lr": lr,
-            },
-        )
-
         if val_loss < best_val:
             best_val = val_loss
             no_improve = 0
@@ -221,7 +215,11 @@ def train_dpo() -> None:
                 break
         save_checkpoint(last_path, policy, optimizer, global_step, best_val, cfg)
 
-    png = plot_losses(run_dir, x="epoch")
+    png = plot_series(run_dir, "step", [
+        ("DPO loss", ["loss"]),
+        ("reward margin", ["margin"]),
+        ("pref accuracy", ["acc"]),
+    ])
     print(
         f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/"
         + (f" (curve: {png})" if png else "")

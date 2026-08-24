@@ -226,10 +226,20 @@ advantages over the value baseline, and a clipped actor + clipped value loss on
 separate optimizers. The trained reward model (the classic RLHF third stage) is
 skipped — PPO optimizes the verifiable reward directly. **Result:** the weakest
 of the three — pass-rate 0.867 (barely above SFT's 0.826), win-rate 0.492 (a
-coin flip vs SFT), KL 0.002 (it barely moved). With only 400 steps and a critic
-learning from scratch, early advantages are too noisy to drive confident updates.
-This is exactly the outcome the roadmap predicted — heavy, finicky to stabilize —
-and it's the empirical case for preferring GRPO on verifiable rewards.
+coin flip vs SFT), KL 0.002 (it barely moved).
+
+**The training curve shows exactly why.** The critic's value loss collapses from
+1.13 to ~0 within the first ~30 steps and flatlines — it trivially learned to
+predict the near-constant reward (~0.8 on almost every rollout, because the
+verifiable reward is low-variance). Once the value baseline matches the reward,
+the **GAE advantages vanish**: `advantage = return − value ≈ 0`. With no advantage
+signal the actor gets essentially no gradient and stalls — actor loss hovers at
+~−0.002 and reward stays flat and noisy for the remaining 370 steps. That's the
+mechanism behind the roadmap's "PPO is heavy and finicky" warning, made concrete:
+a critic that fits a flat reward starves its own actor. GRPO sidesteps it — its
+group-relative baseline normalizes *within* each prompt's samples, so even a
+low-variance reward yields usable advantages. This is the empirical case for
+preferring GRPO on verifiable rewards.
 
 ---
 
@@ -267,7 +277,9 @@ What the table says:
 - **GRPO is a close, conservative second** — nearly DPO's numbers at a third of
   the KL (0.011): most of the gain, least drift from the reference.
 - **PPO underperformed** — a near-coin-flip against SFT (0.492) and essentially
-  no movement (KL 0.002). The heaviest method delivered the least in this budget.
+  no movement (KL 0.002). The heaviest method delivered the least in this budget,
+  and its training curve shows why: the critic collapsed to a constant baseline,
+  starving the actor of advantage signal (mechanism in Step 5 above).
 
 ---
 
@@ -293,6 +305,20 @@ against the γ+1 = 5 ceiling). Speculative decoding pays off when the target
 forward is the bottleneck — large models — not at 14M. The technique is *correct*
 (the output is provably a target sample); the economics simply require scale.
 
+target 13,719,552 params | draft 1,420,800 params | gamma=4 on cuda
+
+--- prompt: 'Once upon a time,' ---
+speculative: Once upon a time, there was a little girl named Lily. She was very hungry and wanted to eat some apples. But her mom said no, because she was already out of food. Lily was very sad and cried a lot. She didn't know what to do. Suddenly, she saw a big tree with apples on it. She tried to climb it, but it was too hard. She started to cry even more. Her mom heard her crying and came to see what was wrong. She saw the little girl crying and asked what was wrong. Lily told her about the apples she was hungry and wanted to eat some apples. Her mom told her to close her eyes and wait for them to come out of the tree. Lily did as her mom said and waited. When they came out, she found a big pile of apples on the ground. She was so happy and ate a lot of apples. From that day on, she knew that if she was in trouble, she would ask for help and try to
+  vanilla 875 ms (200 tok) | speculative 1219 ms (200 tok) | 2.00 tok/target-call | accept-rate 0.25 | speedup 0.72x
+
+--- prompt: 'One day, a little girl named Lily' ---
+speculative: One day, a little girl named Lily was excited to see a new toy. She asked her mom for a new toy. Her mom said yes, and Lily was happy. She went to bed with a smile on her new toy. She dreamed of all the fun things she would do the next day. Summary: Lily was excited to see a new toy and asked her mom for a new one.<|endoftext|>
+  vanilla 647 ms (200 tok) | speculative 537 ms (75 tok) | 1.63 tok/target-call | accept-rate 0.16 | speedup 1.21x
+
+--- prompt: 'Tom and Sara went to the park and' ---
+speculative: Tom and Sara went to the park and saw a big dog with a scarf around. The boy who lost his owner's scarf and ran away. The boy was sad to see his owner, but he knew he was a good boy and that he would never forget this time. The boy went to the park with his family and the scarf on his scarf. He saw a lady who was looking for her. He knew he would never forget this time. He put the scarf around his neck and went to the lady. She was very happy to see him. She gave him a big hug and said he was a good boy. The boy went to the park with his family and the scarf on his neck. He saw a lady who was looking for her lost scarf. The boy gave her the scarf and she hugged him. The lady was very grateful. She said she was sorry for calling the boy for his owner. The boy was happy to see his owner and felt good inside. He knew he would never forget this time. Summ
+  vanilla 646 ms (200 tok) | speculative 1362 ms (200 tok) | 1.69 tok/target-call | accept-rate 0.17 | speedup 0.47x
+
 ## What's next
 
 - **Loss-curve figures** — the base/SFT runs predate metrics logging, so the
@@ -313,3 +339,8 @@ and in watching the textbook failure modes actually happen: the reward getting
 hacked, validation loss lying about it, KL understating the drift, and a simple
 diversity metric plus a held-out perplexity check being the things that told the
 truth. That's a much more durable education than a good number would have been.
+
+stage	curves.png shows
+GRPO	reward 0.80→0.91 ↑, KL 0→0.016 ↑ (controlled), groups active
+PPO	reward flat/noisy, value-loss collapse (the underperformance smoking gun), tiny actor loss
+DPO	loss ↓, margin ↑ to +4.4, accuracy ↑ to ~0.8

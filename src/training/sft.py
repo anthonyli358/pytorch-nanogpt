@@ -47,7 +47,7 @@ from src.models.checkpoints import (
 )
 from src.models.tokenizer import Tokenizer
 from src.data.sft_data import download_instruct, SFTDataset, pad_batch
-from src.eval.metrics import log_metrics, plot_losses
+from src.eval.metrics import log_metrics, plot_series
 from src.training.common import setup_amp, cosine_lr, optimizer_step, configure_optimizers
 
 
@@ -131,6 +131,12 @@ def train_sft() -> None:
                 print(
                     f"epoch {epoch} step {global_step:>6}: loss {loss.item():.4f} | lr {lr:.2e}"
                 )
+                log_metrics(run_dir, {
+                    "step": global_step,
+                    "train_loss": round(loss.item(), 4),
+                    "val_loss": "",  # filled only at epoch boundaries
+                    "lr": lr,
+                })
             global_step += 1
 
         val_loss = evaluate_sft(model, val_loader, ctx, device)
@@ -138,12 +144,11 @@ def train_sft() -> None:
         print(
             f"epoch {epoch}: train {train_loss:.4f} | val {val_loss:.4f} | {(time.time() - start) / 60:.1f} min"
         )
-        log_metrics(
+        log_metrics(  # one row per epoch carries the val point (same schema as the per-step rows)
             run_dir,
             {
-                "epoch": epoch,
                 "step": global_step,
-                "train_loss": round(train_loss, 4),
+                "train_loss": "",
                 "val_loss": round(val_loss, 4),
                 "lr": lr,
             },
@@ -161,7 +166,7 @@ def train_sft() -> None:
                 break
         save_checkpoint(last_path, model, optimizer, global_step, best_val, cfg)
 
-    png = plot_losses(run_dir, x="epoch")
+    png = plot_series(run_dir, "step", [("SFT loss (masked response)", ["train_loss", "val_loss"])])
     print(
         f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/"
         + (f" (curve: {png})" if png else "")

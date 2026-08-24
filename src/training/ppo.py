@@ -56,7 +56,7 @@ from src.config import (
     BETA2,
 )
 from src.data.sft_data import pad_batch
-from src.eval.metrics import log_metrics, plot_losses
+from src.eval.metrics import log_metrics, plot_series
 from src.training.rl_common import token_logprobs, load_prompt_pool, build_rollout_example
 from src.models.checkpoints import (
     load_checkpoint,
@@ -253,7 +253,11 @@ def train_ppo() -> None:
         if step % PPO_CKPT_INTERVAL == 0 or step == PPO_STEPS - 1:
             save_checkpoint(last_path, policy, opt_policy, step, best_reward, cfg)
 
-    png = plot_losses(run_dir, x="step")
+    png = plot_series(run_dir, "step", [
+        ("reward", ["reward", "ema_reward"]),
+        ("value loss", ["value_loss"]),
+        ("actor loss", ["actor_loss"]),
+    ])
     print(
         f"done. best ema reward {best_reward:.3f}. checkpoints in {run_dir}/"
         + (f" (curve: {png})" if png else "")

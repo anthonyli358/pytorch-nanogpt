@@ -50,7 +50,7 @@ from src.config import (
     BETA2,
 )
 from src.data.sft_data import pad_batch
-from src.eval.metrics import log_metrics, plot_losses
+from src.eval.metrics import log_metrics, plot_series
 from src.models.checkpoints import (
     load_checkpoint,
     save_checkpoint,
@@ -205,7 +205,11 @@ def train_grpo() -> None:
         if step % GRPO_CKPT_INTERVAL == 0 or step == GRPO_STEPS - 1:
             save_checkpoint(last_path, policy, optimizer, step, best_reward, cfg)
 
-    png = plot_losses(run_dir, x="step")  # will plot reward/ema if present; harmless otherwise
+    png = plot_series(run_dir, "step", [
+        ("reward", ["reward", "ema_reward"]),
+        ("KL(policy||ref)", ["kl"]),
+        ("active groups", ["active_frac"]),
+    ])
     print(
         f"done. best ema reward {best_reward:.3f}. checkpoints in {run_dir}/"
         + (f" (curve: {png})" if png else "")

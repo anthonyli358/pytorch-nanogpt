@@ -25,6 +25,12 @@ its continuation. There's no clean input -> output, they're the same stream of t
 
 ---
 
+# TODO
+
+1. Retrain base for loss curve
+2. Retrain SFT
+3. Rerun eval/winrate.py
+
 ## Part I — Pretraining
 
 ### 1. Data download ✓
@@ -300,3 +306,4 @@ worse. Exactly why a quality metric rides alongside the reward.
 | Context length | 256 | packing, positional embedding size |
 | Reward source | verifiable vs judge | whether step 11 is ever built |
 | Instruction schema | (set in step 8) | every later generate/score stage |
+
