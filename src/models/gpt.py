@@ -63,6 +63,22 @@ class GPT(nn.Module):
             n -= self.pos_emb.weight.numel()
         return n
 
+    def hidden(self, idx: torch.Tensor) -> torch.Tensor:
+        """Final hidden state (B, T, d_model) after ``ln_f``, before the LM head.
+
+        The shared seam for heads other than the LM head -- e.g. the PPO value
+        head reads these states to estimate per-token values.
+        """
+        B, T = idx.shape
+        assert (
+            T <= self.cfg.block_size
+        ), f"sequence length {T} > block size {self.cfg.block_size}"
+        pos = torch.arange(T, device=idx.device)
+        x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
+        for block in self.blocks:
+            x = block(x)
+        return self.ln_f(x)
+
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
         """Run the model.
 
@@ -76,15 +92,7 @@ class GPT(nn.Module):
                 With targets, logits is (B, T, vocab) and loss is the mean cross-entropy.
                 Without targets (inference), only the last position is computed.
         """
-        B, T = idx.shape
-        assert (
-            T <= self.cfg.block_size
-        ), f"sequence length {T} > block size {self.cfg.block_size}"
-        pos = torch.arange(T, device=idx.device)
-        x = self.drop(self.tok_emb(idx) + self.pos_emb(pos))
-        for block in self.blocks:
-            x = block(x)
-        x = self.ln_f(x)
+        x = self.hidden(idx)
 
         if targets is not None:
             logits = self.lm_head(x)

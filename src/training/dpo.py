@@ -13,12 +13,10 @@ over the reference while lowering the rejected one's; the reference term bakes a
 KL leash into the loss so the policy can't wander far from SFT.
 
 Reuses the optimizer / cosine-schedule / autocast / checkpoint machinery from the
-pretraining and SFT loops. Deliverable: ``dpo_checkpoints/<run>/best.pt`` (``dpo.pt``).
+pretraining and SFT loops. Deliverable: ``checkpoints/dpo/<run>/best.pt`` (``dpo.pt``).
 """
 
-import math
 import time
-from contextlib import nullcontext
 from functools import partial
 
 import torch
@@ -57,38 +55,10 @@ from src.models.checkpoints import (
     resolve_checkpoint,
 )
 from src.models.tokenizer import Tokenizer
-from src.train import configure_optimizers, resolve_device_dtype
+from src.training.common import setup_amp, cosine_lr, optimizer_step, configure_optimizers
+from src.training.rl_common import sequence_logprob
 
 from pathlib import Path
-
-
-def dpo_get_lr(step: int, total_steps: int) -> float:
-    """Cosine schedule with linear warmup over the full DPO run."""
-    if step < DPO_WARMUP_STEPS:
-        return DPO_LR * (step + 1) / DPO_WARMUP_STEPS
-    if step >= total_steps:
-        return DPO_MIN_LR
-    ratio = (step - DPO_WARMUP_STEPS) / max(1, total_steps - DPO_WARMUP_STEPS)
-    coeff = 0.5 * (1.0 + math.cos(math.pi * ratio))
-    return DPO_MIN_LR + coeff * (DPO_LR - DPO_MIN_LR)
-
-
-def sequence_logprob(model, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """Summed log-prob of the response tokens for each sequence in the batch.
-
-    ``y`` is the shifted next-token target with ``-1`` over the prompt and padding
-    (the SFT masking), so the sum covers exactly the response span (+EOS). Passing
-    ``y`` as targets makes ``forward`` return the full ``(B, T, vocab)`` logits.
-
-    Returns:
-        Tensor of shape ``(B,)`` -- one summed response log-prob per sequence.
-    """
-    logits, _ = model(x, y)  # (B, T, vocab); the returned loss is unused here
-    logp = F.log_softmax(logits.float(), dim=-1)
-    mask = y != -1
-    gather_idx = y.clamp(min=0).unsqueeze(-1)  # -1 -> 0 so gather is in range; masked out below
-    token_logp = torch.gather(logp, -1, gather_idx).squeeze(-1)  # (B, T)
-    return (token_logp * mask).sum(dim=-1)
 
 
 def dpo_loss(policy, reference, x, y, beta, ctx):
@@ -133,14 +103,7 @@ def evaluate_dpo(policy, reference, loader, beta, ctx, device):
 def train_dpo() -> None:
     """Run epoch-based DPO with per-epoch eval, best/last checkpoints, early stop."""
     torch.manual_seed(SEED)
-    device, pt_dtype = resolve_device_dtype()
-    device_type = "cuda" if device.startswith("cuda") else "cpu"
-    ctx = (
-        torch.autocast(device_type=device_type, dtype=pt_dtype)
-        if pt_dtype is not torch.float32
-        else nullcontext()
-    )
-    scaler = torch.amp.GradScaler(device_type, enabled=(pt_dtype is torch.float16))
+    device, ctx, scaler = setup_amp()
 
     # Policy (trained) and reference (frozen) both start from the SFT checkpoint.
     init_ckpt = resolve_checkpoint(DPO_INIT_RUN, "best.pt", SFT_CKPT_DIR)
@@ -197,7 +160,7 @@ def train_dpo() -> None:
         ep_loss_sum = ep_acc_sum = 0.0
         ep_steps = 0
         for x, y in train_loader:
-            lr = dpo_get_lr(global_step, total_steps)
+            lr = cosine_lr(global_step, DPO_WARMUP_STEPS, total_steps, DPO_LR, DPO_MIN_LR)
             for group in optimizer.param_groups:
                 group["lr"] = lr
 
@@ -208,12 +171,7 @@ def train_dpo() -> None:
             ep_steps += 1
 
             scaler.scale(loss).backward()
-            if DPO_GRAD_CLIP > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(policy.parameters(), DPO_GRAD_CLIP)
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
+            optimizer_step(scaler, [(optimizer, policy.parameters())], DPO_GRAD_CLIP)
 
             if global_step % DPO_LOG_INTERVAL == 0:
                 left = total_steps - global_step

@@ -11,9 +11,7 @@ Init comes from the pretrained ``best.pt`` (``SFT_INIT_RUN``), and checkpoints
 are written under ``SFT_CKPT_DIR`` so SFT runs never mingle with pretraining runs.
 """
 
-import math
 import time
-from contextlib import nullcontext
 from functools import partial
 from pathlib import Path
 
@@ -50,18 +48,7 @@ from src.models.checkpoints import (
 from src.models.tokenizer import Tokenizer
 from src.data.sft_data import download_instruct, SFTDataset, pad_batch
 from src.eval.metrics import log_metrics, plot_losses
-from src.train import configure_optimizers, resolve_device_dtype
-
-
-def sft_get_lr(step: int, total_steps: int) -> float:
-    """Cosine schedule with linear warmup over the full SFT run."""
-    if step < SFT_WARMUP_STEPS:
-        return SFT_LR * (step + 1) / SFT_WARMUP_STEPS
-    if step >= total_steps:
-        return SFT_MIN_LR
-    ratio = (step - SFT_WARMUP_STEPS) / max(1, total_steps - SFT_WARMUP_STEPS)
-    coeff = 0.5 * (1.0 + math.cos(math.pi * ratio))
-    return SFT_MIN_LR + coeff * (SFT_LR - SFT_MIN_LR)
+from src.training.common import setup_amp, cosine_lr, optimizer_step, configure_optimizers
 
 
 @torch.no_grad()
@@ -84,14 +71,7 @@ def evaluate_sft(model, loader: DataLoader, ctx, device: str) -> float:
 def train_sft() -> None:
     """Run epoch-based SFT with per-epoch eval, best/last checkpoints, early stop."""
     torch.manual_seed(SEED)
-    device, pt_dtype = resolve_device_dtype()
-    device_type = "cuda" if device.startswith("cuda") else "cpu"
-    ctx = (
-        torch.autocast(device_type=device_type, dtype=pt_dtype)
-        if pt_dtype is not torch.float32
-        else nullcontext()
-    )
-    scaler = torch.amp.GradScaler(device_type, enabled=(pt_dtype is torch.float16))
+    device, ctx, scaler = setup_amp()
 
     # Init from the pretrained checkpoint.
     init_ckpt = resolve_checkpoint(SFT_INIT_RUN, "best.pt", CKPT_DIR)
@@ -135,7 +115,7 @@ def train_sft() -> None:
     for epoch in range(1, SFT_EPOCHS + 1):
         ep_loss_sum, ep_steps = 0.0, 0
         for x, y in train_loader:
-            lr = sft_get_lr(global_step, total_steps)
+            lr = cosine_lr(global_step, SFT_WARMUP_STEPS, total_steps, SFT_LR, SFT_MIN_LR)
             for group in optimizer.param_groups:
                 group["lr"] = lr
 
@@ -145,12 +125,7 @@ def train_sft() -> None:
             ep_loss_sum += loss.item()
             ep_steps += 1
             scaler.scale(loss).backward()
-            if SFT_GRAD_CLIP > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), SFT_GRAD_CLIP)
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
+            optimizer_step(scaler, [(optimizer, model.parameters())], SFT_GRAD_CLIP)
 
             if global_step % SFT_LOG_INTERVAL == 0:
                 print(

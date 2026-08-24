@@ -220,5 +220,7 @@ __marimo__/
 # Project files
 /data/
 checkpoints/
-sft_checkpoints/
-dpo_checkpoints/
+eval_results/
+logs/
+*.pt
+.claude/

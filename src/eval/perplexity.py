@@ -17,35 +17,14 @@ import torch
 from src.config import (
     PACKED_DIR,
     PACKED_FILES,
-    META_FILE,
     CONTEXT_LEN,
     CKPT_DIR,
     CKPT_RUN,
-    DEVICE,
-    DTYPE,
     EVAL_BATCH_SIZE,
     EVAL_MAX_BATCHES,
 )
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint
-
-_DTYPES = {
-    "float32": torch.float32,
-    "bfloat16": torch.bfloat16,
-    "float16": torch.float16,
-}
-
-
-def resolve_device_dtype() -> tuple[str, torch.dtype]:
-    """Pick device and a supported autocast dtype (mirrors train.py)."""
-    device = DEVICE or ("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = _DTYPES[DTYPE]
-    if dtype is torch.bfloat16 and not (
-        device.startswith("cuda") and torch.cuda.is_bf16_supported()
-    ):
-        dtype = torch.float16 if device.startswith("cuda") else torch.float32
-    if dtype is torch.float16 and not device.startswith("cuda"):
-        dtype = torch.float32
-    return device, dtype
+from src.training.common import resolve_device_dtype
 
 
 @torch.no_grad()

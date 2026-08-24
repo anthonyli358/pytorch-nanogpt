@@ -70,3 +70,47 @@ def verifiable_reward(prompt: str, story: str) -> float | None:
     if "words" not in fields:
         return None
     return word_inclusion(story, fields["words"])
+
+
+def distinct_ngram_ratio(story: str, n: int = 2) -> float:
+    """Fraction of word n-grams that are distinct (1.0 = none repeat, low = looping).
+
+    A crude fluency proxy the word-inclusion reward is blind to: a small model on
+    greedy decode loops ("they like the tree house. they like the tree house."),
+    which collapses this ratio while word-inclusion stays pinned at 1.0.
+    """
+    tokens = story.lower().split()
+    if len(tokens) < n + 1:
+        return 1.0  # too short to repeat
+    grams = [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
+    return len(set(grams)) / len(grams)
+
+
+def repetition_penalty(story: str, n: int = 2) -> float:
+    """Repetition amount in [0, 1]: 0 = all n-grams distinct, higher = more looping."""
+    return 1.0 - distinct_ngram_ratio(story, n)
+
+
+def shaped_reward(
+    prompt: str, story: str, rep_weight: float = 0.5, n: int = 2
+) -> float | None:
+    """Verifiable reward minus a repetition penalty -- the shaped training signal.
+
+    Makes "include the words *and* stay diverse" the objective so cramming/looping
+    stops paying (the reward-hacking mode seen in DPO/GRPO). Returns None when
+    there is nothing to verify, mirroring :func:`verifiable_reward`; at
+    ``rep_weight=0`` it is exactly the verifiable reward.
+
+    Args:
+        prompt: The instruction (text up to and including ``Story:``).
+        story: The generated story text.
+        rep_weight: Weight of the repetition penalty subtracted from the reward.
+        n: n-gram size for the diversity metric.
+
+    Returns:
+        Shaped reward, or None if there is nothing to verify.
+    """
+    base = verifiable_reward(prompt, story)
+    if base is None:
+        return None
+    return base - rep_weight * repetition_penalty(story, n)

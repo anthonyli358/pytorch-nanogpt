@@ -23,6 +23,8 @@ from src.config import (
     SFT_CKPT_DIR,
     DPO_DATA_DIR,
     PAIRS_FILE,
+    REP_WEIGHT,
+    REP_NGRAM,
     PREF_INIT_RUN,
     PREF_NUM_PROMPTS,
     PREF_SAMPLES_PER_PROMPT,
@@ -37,8 +39,8 @@ from src.config import (
 from src.data.sft_data import download_instruct, parse_records
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint
 from src.models.tokenizer import Tokenizer
-from src.reward import parse_instruction, verifiable_reward
-from src.train import resolve_device_dtype
+from src.reward import parse_instruction, verifiable_reward, repetition_penalty
+from src.training.common import resolve_device_dtype
 
 
 @torch.no_grad()
@@ -113,20 +115,30 @@ def make_preferences() -> None:
             stories = sample_completions(
                 model, tok, prompt_ids, PREF_SAMPLES_PER_PROMPT, n_new, ctx, device
             )
-            scored = [(verifiable_reward(prompt, s), s) for s in stories]
-            scored = [(r, s) for r, s in scored if r is not None and s]
+            # Rank by the SHAPED score (verifiable reward minus a repetition penalty)
+            # so that on a word-inclusion tie the less-repetitive completion is
+            # chosen -- teaching DPO against the looping the raw reward can't see.
+            scored = []
+            for s in stories:
+                base = verifiable_reward(prompt, s)
+                if base is None or not s:
+                    continue
+                shaped = base - REP_WEIGHT * repetition_penalty(s, REP_NGRAM)
+                scored.append((shaped, base, s))
             seen += 1
 
             if len(scored) >= 2:
-                best_r, best_s = max(scored, key=lambda t: t[0])
-                worst_r, worst_s = min(scored, key=lambda t: t[0])
-                if best_r > worst_r:
+                best = max(scored, key=lambda t: t[0])
+                worst = min(scored, key=lambda t: t[0])
+                if best[0] > worst[0] + 1e-6:  # spread in the shaped score
                     fout.write(json.dumps({
                         "prompt": prompt,
-                        "chosen": best_s,
-                        "rejected": worst_s,
-                        "chosen_reward": round(best_r, 4),
-                        "rejected_reward": round(worst_r, 4),
+                        "chosen": best[2],
+                        "rejected": worst[2],
+                        "chosen_reward": round(best[1], 4),
+                        "rejected_reward": round(worst[1], 4),
+                        "chosen_score": round(best[0], 4),
+                        "rejected_score": round(worst[0], 4),
                     }) + "\n")
                     pairs += 1
                 else:

@@ -60,7 +60,7 @@ EVAL_INTERVAL = 500  # steps between val evals + checkpoints
 EVAL_ITERS = 100  # batches averaged per eval
 LOG_INTERVAL = 20  # steps between train-loss logs
 
-CKPT_DIR = "checkpoints"
+CKPT_DIR = "checkpoints/base"  # pretrained (base) runs; post-training stages sit beside it
 RESUME = True                # resume training from a prior run's last.pt
 RESUME_FROM = None            # None -> latest run dir; or a run dir / .pt path
 CKPT_RUN = None               # sample/evaluate: None -> latest run's best.pt; or a run dir / .pt path
@@ -75,6 +75,30 @@ MAX_NEW_TOKENS = 200
 TEMPERATURE = 0.8
 TOP_K = 200
 TOP_P = 0.95
+
+# ----- Speculative decoding (Part I, step 8) -----
+# A small/fast DRAFT proposes SPEC_GAMMA tokens; the TARGET verifies them in a
+# single forward pass and accepts the longest prefix consistent with its own
+# distribution (rejection-sampling correction on the first mismatch). Output is
+# distributed exactly as sampling from the target alone, but several tokens land
+# per target forward -- the throughput win, gated by the draft's acceptance rate.
+SPEC_TARGET_DIR = "checkpoints/sft"  # target = the model whose distribution we want to preserve
+SPEC_TARGET_RUN = None               # None -> latest run under SPEC_TARGET_DIR
+SPEC_DRAFT_DIR = "checkpoints/draft"  # a smaller GPT trained on the same corpus (cheaper per token)
+SPEC_DRAFT_RUN = None
+SPEC_GAMMA = 4                       # draft tokens proposed per verification round
+SPEC_MAX_NEW_TOKENS = 200
+
+# Draft-model training: a small GPT on the same corpus/objective, written to
+# SPEC_DRAFT_DIR. It only needs to propose tokens the target usually accepts, so
+# it can be crude and cheap -- a better draft raises the acceptance rate (speedup).
+DRAFT_N_LAYER = 2
+DRAFT_N_HEAD = 2                     # d_model 128 / 2 = 64 head dim
+DRAFT_D_MODEL = 128
+DRAFT_MAX_STEPS = 3000               # ~0.75 epoch; enough for a usable draft
+DRAFT_LR = 6e-4
+DRAFT_MIN_LR = 6e-5
+DRAFT_WARMUP_STEPS = 100
 
 # ----- Evaluation ----
 # ----- Evaluation ----
@@ -94,7 +118,7 @@ SFT_BUILD_LOG_EVERY = 500_000 # progress print every N records while tokenizing 
 
  
 SFT_INIT_RUN = None           # pretrained run to fine-tune from (None = latest)
-SFT_CKPT_DIR = "sft_checkpoints"   # separate from pretraining checkpoints/
+SFT_CKPT_DIR = "checkpoints/sft"   # under the shared checkpoints/ parent
 SFT_PATIENCE = 2              # early-stop after this many epochs without val improvement
 SFT_BATCH_SIZE = 32
 SFT_EPOCHS = 1
@@ -105,6 +129,10 @@ SFT_WEIGHT_DECAY = 0.1
 SFT_GRAD_CLIP = 1.0
 SFT_EVAL_INTERVAL = 500
 SFT_LOG_INTERVAL = 50
+
+# ----- Reward shaping (repetition penalty; used by preference selection + GRPO) -----
+REP_NGRAM = 2                       # n-gram size for the distinct-n-gram diversity metric
+REP_WEIGHT = 0.5                    # weight of the repetition penalty subtracted from the verifiable reward
 
 # ----- Preference generation (step 9 -> DPO pairs) -----
 # Sample K completions per instruct prompt, score each with the verifiable
@@ -123,13 +151,13 @@ PREF_LOG_EVERY = 200               # progress print every N prompts processed
 PREF_SEED = 1337
 
 # ----- DPO (step 10) -----
-DPO_CKPT_DIR = "dpo_checkpoints"    # separate from SFT / pretraining checkpoints
+DPO_CKPT_DIR = "checkpoints/dpo"    # under the shared checkpoints/ parent
 DPO_INIT_RUN = None                 # SFT run to init policy + frozen reference from (None = latest)
 DPO_MAX_LEN = None                  # cap example length in tokens; None -> model block_size
 DPO_VAL_FRACTION = 0.05             # fraction of pairs held out for val loss / reward accuracy
-DPO_BETA = 0.1                      # KL strength in the DPO objective (higher = stay closer to ref)
+DPO_BETA = 0.3                      # KL strength in the DPO objective (higher = stay closer to ref)
 DPO_BATCH_SIZE = 16                 # pairs per step (2x sequences forwarded: chosen + rejected)
-DPO_EPOCHS = 3                      # small pair set; 1 is thin. Watch for margin blow-up (over-opt) past ~2-3
+DPO_EPOCHS = 1                      # 2+ epochs over-optimized (+42% val ppl, reward hacking); 1 is the safe default
 DPO_LR = 1e-5                       # DPO is sensitive; well below the SFT peak
 DPO_MIN_LR = 1e-6
 DPO_WARMUP_STEPS = 50
@@ -141,10 +169,78 @@ DPO_PATIENCE = 2                    # early-stop after this many epochs without 
 # ----- Post-training eval (step 13: win-rate vs SFT + KL from reference) -----
 # On HELD-OUT instruct-valid prompts (not the train prompts pairs were made from),
 # sample from SFT and DPO, score with the verifiable reward, and compare.
-WINRATE_SFT_RUN = None              # SFT baseline run (None = latest under SFT_CKPT_DIR)
-WINRATE_DPO_RUN = None              # DPO run to grade (None = latest under DPO_CKPT_DIR)
 WINRATE_NUM_PROMPTS = 500           # held-out valid prompts (with a Words: field) to evaluate
 WINRATE_SAMPLES_PER_PROMPT = 4      # completions per prompt per model; mean reward is the per-prompt score
 WINRATE_LOG_EVERY = 50             # progress print every N prompts
 WINRATE_SEED = 1234                # eval-only seed (held-out prompts, distinct from PREF_SEED)
 WINRATE_RESULTS_FILE = "winrate.json"  # written into the DPO run dir
+WINRATE_SAMPLE_DUMP = 6            # side-by-side SFT vs DPO generations (greedy) to print for eyeballing
+
+# ----- GRPO (step 12: online RL with the verifiable + shaped reward) -----
+# Sample a GROUP of completions per prompt, normalize each reward against the
+# group mean/std for the advantage (no critic), and take a clipped PPO step with
+# a KL leash to the frozen reference. Lighter than PPO; pairs with verifiable rewards.
+GRPO_CKPT_DIR = "checkpoints/grpo"
+GRPO_INIT_DIR = SFT_CKPT_DIR        # dir to resolve the init from (SFT for canonical GRPO; point at DPO to continue)
+GRPO_INIT_RUN = None                # policy + frozen reference init (None = latest run under GRPO_INIT_DIR)
+GRPO_PROMPT_POOL = 20_000           # instruct-train prompts (with Words:) pre-loaded to sample rollouts from
+GRPO_GROUP_SIZE = 8                 # completions per prompt (the group the advantage normalizes within)
+GRPO_PROMPTS_PER_STEP = 16          # prompts per rollout; rollout batch = this * GRPO_GROUP_SIZE sequences
+GRPO_STEPS = 400                    # optimizer steps (rollouts)
+GRPO_INNER_EPOCHS = 1               # PPO update passes per rollout (1 = pure on-policy, ratio ~ 1)
+GRPO_LR = 1e-6                      # RL is delicate; well below SFT/DPO
+GRPO_WARMUP_STEPS = 20
+GRPO_WEIGHT_DECAY = 0.0
+GRPO_GRAD_CLIP = 1.0
+GRPO_BETA = 0.04                    # KL(policy || reference) penalty weight
+GRPO_CLIP_EPS = 0.2                 # PPO ratio clip range (1 +/- eps)
+GRPO_TEMPERATURE = 1.0              # rollout sampling temperature (> 0 for group diversity)
+GRPO_TOP_K = 200
+GRPO_TOP_P = 0.95
+GRPO_MAX_NEW_TOKENS = 200           # cap on rollout completion length (also bounded by remaining context)
+GRPO_REP_WEIGHT = REP_WEIGHT        # repetition-penalty weight in the rollout reward (0 = verifiable only)
+GRPO_LOG_INTERVAL = 5
+GRPO_CKPT_INTERVAL = 50             # save last.pt every N steps; best.pt on best smoothed reward
+GRPO_SEED = 1337
+
+# ----- PPO (step 12, full classic actor-critic stack) -----
+# The "build the whole thing for the education" path: policy + a value head
+# (critic) + frozen reference, per-token KL-penalty reward, GAE advantages, and a
+# clipped actor + clipped value loss. Heavier than GRPO (a critic to train), and
+# it still uses the verifiable/shaped reward directly (reward model, step 11, skipped).
+PPO_CKPT_DIR = "checkpoints/ppo"
+PPO_INIT_DIR = SFT_CKPT_DIR         # policy + critic backbone + frozen reference init
+PPO_INIT_RUN = None                 # None = latest run under PPO_INIT_DIR
+PPO_PROMPT_POOL = 20_000            # instruct-train prompts (with Words:) to sample rollouts from
+PPO_PROMPTS_PER_STEP = 32           # completions per rollout (one per prompt; no groups -- critic is the baseline)
+PPO_STEPS = 400                     # optimizer steps (rollouts)
+PPO_INNER_EPOCHS = 4                # PPO reuses each rollout for several clipped update passes
+PPO_LR = 1e-6                       # actor LR
+PPO_VALUE_LR = 1e-5                 # critic can learn faster than the actor
+PPO_WARMUP_STEPS = 20
+PPO_WEIGHT_DECAY = 0.0
+PPO_GRAD_CLIP = 1.0
+PPO_CLIP_EPS = 0.2                  # PPO ratio + value clip range
+PPO_VF_COEF = 0.5                   # weight of the value loss in the total objective
+PPO_KL_BETA = 0.02                  # per-token KL(policy||ref) penalty folded into the reward
+PPO_GAMMA = 1.0                     # discount (1.0: short episodes, no far-future discounting)
+PPO_LAM = 0.95                      # GAE lambda (bias/variance trade-off)
+PPO_TEMPERATURE = 1.0
+PPO_TOP_K = 200
+PPO_TOP_P = 0.95
+PPO_MAX_NEW_TOKENS = 200
+PPO_REP_WEIGHT = REP_WEIGHT         # repetition-penalty weight in the terminal reward
+PPO_LOG_INTERVAL = 5
+PPO_CKPT_INTERVAL = 50
+PPO_SEED = 1337
+
+# ----- Post-training comparison set (used by eval/winrate.py) -----
+# Everything is graded against the baseline; each candidate stage is resolved to
+# the latest run under its dir and silently skipped if that dir has no runs yet.
+WINRATE_BASELINE = ("SFT", SFT_CKPT_DIR, None)   # (label, checkpoint dir, run or None=latest)
+WINRATE_MODELS = [
+    ("Base", CKPT_DIR, None),                    # pretrained floor: shows what SFT/post-training bought
+    ("DPO", DPO_CKPT_DIR, None),
+    ("GRPO", GRPO_CKPT_DIR, None),
+    ("PPO", PPO_CKPT_DIR, None),
+]
