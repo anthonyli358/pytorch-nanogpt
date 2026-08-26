@@ -19,6 +19,7 @@ Run: ``python -m src.eval.winrate``. Results go to ``eval_results/winrate.json``
 import argparse
 import json
 import time
+from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -42,7 +43,8 @@ from src.config import (
     WINRATE_SEED,
     WINRATE_RESULTS_FILE,
 )
-from src.data.sft_data import download_instruct, parse_records, build_example, pad_batch
+from src.data.sft_data import download_instruct, parse_records
+from src.data.common import build_example, pad_batch
 from src.eval.perplexity import evaluate_split
 from src.training.rl_common import sequence_logprob
 from src.make_preferences import sample_completions
@@ -52,7 +54,7 @@ from src.reward import parse_instruction, verifiable_reward, distinct_ngram_rati
 from src.training.common import resolve_device_dtype
 
 
-def resolve_stage(label, ckpt_dir, run):
+def resolve_stage(label: str, ckpt_dir: str, run) -> Path | None:
     """Resolve a stage to its best.pt path, or None if the dir has no runs yet."""
     if run is None and latest_run_dir(ckpt_dir) is None:
         return None
@@ -62,7 +64,9 @@ def resolve_stage(label, ckpt_dir, run):
         return None
 
 
-def held_out_prompts(tok: Tokenizer, cfg, max_prompt: int):
+def held_out_prompts(
+    tok: Tokenizer, cfg, max_prompt: int
+) -> Iterator[tuple[str, list[int], int]]:
     """Yield ``(prompt, prompt_ids, n_new)`` for valid prompts with a Words: field."""
     paths = download_instruct(DATA_DIR)
     for prompt, _ in parse_records(paths["valid"]):
@@ -82,7 +86,9 @@ def _mean_reward(prompt: str, stories: list[str]) -> float | None:
 
 
 @torch.no_grad()
-def _sequence_kl(policy, reference, stories, prompt, tok, max_len, ctx, device):
+def _sequence_kl(
+    policy, reference, stories, prompt, tok, max_len, ctx, device
+) -> tuple[float, float, int]:
     """Estimate KL(policy || reference) on ``stories`` (samples from the policy)."""
     examples = []
     for s in stories:

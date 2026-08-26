@@ -55,7 +55,7 @@ from src.config import (
     BETA1,
     BETA2,
 )
-from src.data.sft_data import pad_batch
+from src.data.common import pad_batch
 from src.eval.metrics import log_metrics, plot_series
 from src.training.rl_common import token_logprobs, load_prompt_pool, build_rollout_example
 from src.models.checkpoints import (
@@ -85,7 +85,18 @@ class ValueModel(nn.Module):
 
 
 @torch.no_grad()
-def rollout(policy, value_model, reference, tok, cfg, pool, ctx, device):
+def rollout(
+    policy, value_model, reference, tok, cfg, pool, ctx, device
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    float,
+]:
     """Sample one completion per prompt; return the padded batch + rollout tensors."""
     idx = torch.randint(len(pool), (PPO_PROMPTS_PER_STEP,)).tolist()
     examples, rewards = [], []
@@ -114,7 +125,9 @@ def rollout(policy, value_model, reference, tok, cfg, pool, ctx, device):
     return x, y, mask, rewards, old_logp, ref_logp, values, resp_len
 
 
-def compute_gae(rewards, values, mask, old_logp, ref_logp):
+def compute_gae(
+    rewards, values, mask, old_logp, ref_logp
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Per-token reward shaping + GAE; returns normalized advantages and returns.
 
     Reward per response token is the KL penalty; the scalar reward lands on each
@@ -143,7 +156,9 @@ def compute_gae(rewards, values, mask, old_logp, ref_logp):
     return adv, returns
 
 
-def ppo_losses(policy, value_model, x, y, mask, adv, returns, old_logp, old_values, ctx):
+def ppo_losses(
+    policy, value_model, x, y, mask, adv, returns, old_logp, old_values, ctx
+) -> tuple[torch.Tensor, float, float]:
     """Clipped actor surrogate + clipped value loss for one update pass."""
     with ctx:
         new_logp, _ = token_logprobs(policy, x, y)

@@ -46,7 +46,8 @@ from src.models.checkpoints import (
     resolve_checkpoint,
 )
 from src.models.tokenizer import Tokenizer
-from src.data.sft_data import download_instruct, SFTDataset, pad_batch
+from src.data.sft_data import download_instruct, SFTDataset
+from src.data.common import pad_batch
 from src.eval.metrics import log_metrics, plot_series
 from src.training.common import setup_amp, cosine_lr, optimizer_step, configure_optimizers
 

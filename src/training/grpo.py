@@ -49,7 +49,7 @@ from src.config import (
     BETA1,
     BETA2,
 )
-from src.data.sft_data import pad_batch
+from src.data.common import pad_batch
 from src.eval.metrics import log_metrics, plot_series
 from src.models.checkpoints import (
     load_checkpoint,
@@ -64,7 +64,9 @@ from src.training.rl_common import token_logprobs, load_prompt_pool, build_rollo
 
 
 @torch.no_grad()
-def rollout(policy, tok, cfg, pool, ctx, device):
+def rollout(
+    policy, tok, cfg, pool, ctx, device
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, float]]:
     """Sample groups, score them, and build the padded update batch.
 
     Returns ``(x, y, advantages, stats)`` where ``x, y`` are ``(N, T)`` with
@@ -114,7 +116,9 @@ def rollout(policy, tok, cfg, pool, ctx, device):
     return x.to(device), y.to(device), advantages.to(device), stats
 
 
-def grpo_step(policy, reference, x, y, advantages, old_logp, ref_logp, ctx):
+def grpo_step(
+    policy, reference, x, y, advantages, old_logp, ref_logp, ctx
+) -> tuple[torch.Tensor, float]:
     """One clipped-surrogate + KL update pass; returns ``(loss, mean_kl)``."""
     with ctx:
         logp, mask = token_logprobs(policy, x, y)
