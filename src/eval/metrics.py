@@ -1,16 +1,10 @@
-"""Per-run metrics logging and loss-curve plotting.
-
-Appends rows to ``<run_dir>/metrics.csv`` during training (no dependencies), and
-renders ``<run_dir>/loss.png`` from that CSV (needs matplotlib). Keeping the CSV
-separate means the data is always saved even if plotting isn't available.
-"""
-
 import csv
 from pathlib import Path
 
 
 def log_metrics(run_dir: Path, row: dict, filename: str = "metrics.csv") -> Path:
-    """Append one row to the run's metrics CSV, writing the header once.
+    """
+    Append one row to the run's metrics CSV, writing the header once.
 
     Args:
         run_dir: The run directory.
@@ -30,9 +24,11 @@ def log_metrics(run_dir: Path, row: dict, filename: str = "metrics.csv") -> Path
     return path
 
 
-def plot_losses(run_dir: Path, x: str = "step", filename: str = "metrics.csv",
-                out: str = "loss.png") -> Path | None:
-    """Plot train/val loss vs ``x`` from the metrics CSV; save as a PNG.
+def plot_losses(
+    run_dir: Path, x: str = "step", filename: str = "metrics.csv", out: str = "loss.png"
+) -> Path | None:
+    """
+    Plot train/val loss from the metrics CSV and save as a PNG.
 
     Returns the PNG path, or None if matplotlib is unavailable or there's no data.
     """
@@ -41,6 +37,7 @@ def plot_losses(run_dir: Path, x: str = "step", filename: str = "metrics.csv",
         return None
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
@@ -53,7 +50,9 @@ def plot_losses(run_dir: Path, x: str = "step", filename: str = "metrics.csv",
 
     fig, ax = plt.subplots(figsize=(7, 4))
     for col in ("train_loss", "val_loss"):
-        pts = [(float(r[x]), float(r[col])) for r in rows if r.get(col) not in (None, "")]
+        pts = [
+            (float(r[x]), float(r[col])) for r in rows if r.get(col) not in (None, "")
+        ]
         if pts:
             xs, ys = zip(*pts)
             ax.plot(xs, ys, marker="o", markersize=3, label=col)
@@ -67,19 +66,21 @@ def plot_losses(run_dir: Path, x: str = "step", filename: str = "metrics.csv",
     return out_path
 
 
-def plot_series(run_dir, x="step", panels=None, filename="metrics.csv", out="curves.png"):
-    """Plot stacked panels of metric columns vs ``x`` from the run's CSV.
+def plot_series(
+    run_dir, x="step", panels=None, filename="metrics.csv", out="curves.png"
+):
+    """
+    Plot stacked panels of metric columns from the run's CSV.
+    Each panel is a single metric, 'panels' is a list of (ylabel, [column, ...])
 
-    ``panels`` is a list of ``(ylabel, [column, ...])`` -- one stacked subplot per
-    panel, the columns in a panel sharing a y-axis. For the RL/DPO curves that
-    ``plot_losses`` can't render (reward/KL for GRPO, reward/value-loss for PPO,
-    loss/margin for DPO). Returns the PNG path, or None if unplottable.
+    Returns the PNG path, or None if unplottable.
     """
     path = Path(run_dir) / filename
     if not path.exists() or not panels:
         return None
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
@@ -90,12 +91,17 @@ def plot_series(run_dir, x="step", panels=None, filename="metrics.csv", out="cur
     if not rows:
         return None
 
-    fig, axes = plt.subplots(len(panels), 1, figsize=(7, 2.6 * len(panels)),
-                             sharex=True, squeeze=False)
+    fig, axes = plt.subplots(
+        len(panels), 1, figsize=(7, 2.6 * len(panels)), sharex=True, squeeze=False
+    )
     for ax, (ylabel, cols) in zip(axes[:, 0], panels):
         drew = False
         for col in cols:
-            pts = [(float(r[x]), float(r[col])) for r in rows if r.get(col) not in (None, "")]
+            pts = [
+                (float(r[x]), float(r[col]))
+                for r in rows
+                if r.get(col) not in (None, "")
+            ]
             if pts:
                 xs, ys = zip(*pts)
                 ax.plot(xs, ys, marker="o", markersize=2, label=col)
