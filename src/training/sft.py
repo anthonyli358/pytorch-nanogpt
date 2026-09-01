@@ -28,7 +28,12 @@ from src.models.tokenizer import Tokenizer
 from src.data.sft_data import download_instruct, SFTDataset, MAX_SFT_EXAMPLES
 from src.data.common import pad_batch
 from src.eval.metrics import log_metrics, plot_series
-from src.training.common import setup_amp, cosine_lr, optimizer_step, configure_optimizers
+from src.training.common import (
+    setup_amp,
+    cosine_lr,
+    optimizer_step,
+    configure_optimizers,
+)
 
 
 @dataclass
@@ -37,16 +42,16 @@ class SFTConfig:
     SFT trainer hyperparameters for fine-tuning, init from a pretrained run.
     """
 
-    init_run: str | None = None   # pretrained run to fine-tune from (None = latest)
-    max_len: int | None = None    # cap example length in tokens; None -> model block_size
-    patience: int = 2             # early-stop after this many epochs without val improvement
+    init_run: str | None = None  # pretrained run to fine-tune from (None = latest)
+    max_len: int | None = None  # cap example length in tokens; None -> model block_size
+    patience: int = 2  # early-stop after this many epochs without val improvement
     batch_size: int = 32
     epochs: int = 1
-    lr: float = 3e-4              # lower than pretraining peak (fine-tuning)
+    lr: float = 3e-4  # lower than pretraining peak (fine-tuning)
     min_lr: float = 3e-5
     warmup_steps: int = 100
     weight_decay: float = 0.1
-    beta1: float = 0.9   # Adam betas
+    beta1: float = 0.9  # Adam betas
     beta2: float = 0.95
     grad_clip: float = 1.0
     log_interval: int = 50
@@ -116,7 +121,9 @@ def train_sft(cfg: SFTConfig = SFTConfig()) -> None:
     for epoch in range(1, cfg.epochs + 1):
         ep_loss_sum, ep_steps = 0.0, 0
         for x, y in train_loader:
-            lr = cosine_lr(global_step, cfg.warmup_steps, total_steps, cfg.lr, cfg.min_lr)
+            lr = cosine_lr(
+                global_step, cfg.warmup_steps, total_steps, cfg.lr, cfg.min_lr
+            )
             for group in optimizer.param_groups:
                 group["lr"] = lr
 
@@ -132,12 +139,15 @@ def train_sft(cfg: SFTConfig = SFTConfig()) -> None:
                 print(
                     f"epoch {epoch} step {global_step:>6}: loss {loss.item():.4f} | lr {lr:.2e}"
                 )
-                log_metrics(run_dir, {
-                    "step": global_step,
-                    "train_loss": round(loss.item(), 4),
-                    "val_loss": "",  # filled only at epoch boundaries
-                    "lr": lr,
-                })
+                log_metrics(
+                    run_dir,
+                    {
+                        "step": global_step,
+                        "train_loss": round(loss.item(), 4),
+                        "val_loss": "",  # filled only at epoch boundaries
+                        "lr": lr,
+                    },
+                )
             global_step += 1
 
         val_loss = evaluate_sft(model, val_loader, ctx, device)
@@ -167,7 +177,9 @@ def train_sft(cfg: SFTConfig = SFTConfig()) -> None:
                 break
         save_checkpoint(last_path, model, optimizer, global_step, best_val, gpt_cfg)
 
-    png = plot_series(run_dir, "step", [("SFT loss (masked response)", ["train_loss", "val_loss"])])
+    png = plot_series(
+        run_dir, "step", [("SFT loss (masked response)", ["train_loss", "val_loss"])]
+    )
     print(
         f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/"
         + (f" (curve: {png})" if png else "")

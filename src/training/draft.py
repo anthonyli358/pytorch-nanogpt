@@ -1,9 +1,8 @@
-"""Train a small DRAFT model for speculative decoding (Part I, step 8).
+"""
+Train a small DRAFT model for speculative decoding.
 
 Same corpus and next-token objective as base pretraining, but a much smaller GPT
-so each forward is cheap. Its only job is to propose tokens the target usually
-accepts. Reuses the pretraining machinery from ``training.common``; writes to
-``SPEC_DRAFT_DIR``.
+so each forward is cheap.
 """
 
 import json
@@ -52,12 +51,12 @@ class DraftConfig:
     min_lr: float = 6e-5
     warmup_steps: int = 100
     weight_decay: float = 0.1
-    beta1: float = 0.9   # Adam betas
+    beta1: float = 0.9  # Adam betas
     beta2: float = 0.95
     grad_clip: float = 1.0
-    grad_accum_steps: int = 8       # effective batch = batch_size * grad_accum_steps
-    eval_interval: int = 500        # steps between val evals + checkpoints
-    log_interval: int = 20          # steps between train-loss logs
+    grad_accum_steps: int = 8  # effective batch = batch_size * grad_accum_steps
+    eval_interval: int = 500  # steps between val evals + checkpoints
+    log_interval: int = 20  # steps between train-loss logs
 
 
 def train_draft(cfg: DraftConfig = DraftConfig()) -> None:

@@ -40,7 +40,9 @@ def sequence_logprob(model, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return (tok * mask).sum(dim=-1)
 
 
-def load_prompt_pool(tok: Tokenizer, max_prompt: int, limit: int) -> list[tuple[str, list[int]]]:
+def load_prompt_pool(
+    tok: Tokenizer, max_prompt: int, limit: int
+) -> list[tuple[str, list[int]]]:
     """
     Pre-tokenize instruct-train prompts with a `Words:` field into an in-memory pool.
 

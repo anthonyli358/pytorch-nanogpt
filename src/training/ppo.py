@@ -1,23 +1,9 @@
-"""PPO: the full classic actor-critic stack (step 12, the education path).
+"""
+PPO: the full classic actor-critic stack..
 
-Everything GRPO drops, added back. Each step:
 
-1. **Rollout.** Sample prompts, one completion each from the policy; record the
-   old per-token log-probs, the reference log-probs, and the critic's per-token
-   values.
-2. **Reward.** A per-token KL penalty ``-beta*(logp_policy - logp_ref)`` at every
-   response token, plus the scalar shaped reward added at the final (EOS) token --
-   the standard RLHF token-reward shaping.
-3. **GAE.** Generalized Advantage Estimation over the response tokens using the
-   critic's value baseline (this is what GRPO replaces with a group mean).
-4. **Update.** ``inner_epochs`` passes of a clipped actor surrogate + a clipped
-   value loss, actor and critic on separate optimizers/LRs.
-
-The critic is a second GPT backbone (init from SFT) with a scalar value head
-(``ValueModel``). Reward model (step 11) is skipped: PPO optimizes the verifiable
-reward directly. Shares the rollout/log-prob/reward machinery with GRPO.
-Deliverable: ``checkpoints/ppo/<run>/best.pt`` (the policy; the critic is training
-scaffolding and isn't persisted).
+The critic is a second GPT backbone with a scalar value head `ValueModel`.
+PPO optimizes the verifiable reward directly.
 """
 
 import time
@@ -35,7 +21,11 @@ from src.config import (
 )
 from src.data.common import pad_batch
 from src.eval.metrics import log_metrics, plot_series
-from src.training.rl_common import token_logprobs, load_prompt_pool, build_rollout_example
+from src.training.rl_common import (
+    token_logprobs,
+    load_prompt_pool,
+    build_rollout_example,
+)
 from src.models.checkpoints import (
     load_checkpoint,
     save_checkpoint,
@@ -45,35 +35,38 @@ from src.models.checkpoints import (
 from src.models.gpt import GPT
 from src.models.tokenizer import Tokenizer
 from src.reward import shaped_reward
-from src.training.common import setup_amp, cosine_lr, optimizer_step, configure_optimizers
+from src.training.common import (
+    setup_amp,
+    cosine_lr,
+    optimizer_step,
+    configure_optimizers,
+)
 
 
 @dataclass
 class PPOConfig:
     """
     PPO trainer hyperparameters (actor-critic; init from an SFT run).
-
-    Shared betas and the reward-shaping n-gram (REP_NGRAM) stay in src/config.py.
     """
 
-    init_dir: str = SFT_CKPT_DIR   # policy + critic backbone + frozen reference init
-    init_run: str | None = None    # None = latest run under init_dir
-    prompt_pool: int = 20_000      # instruct-train prompts (with Words:) to sample rollouts from
-    prompts_per_step: int = 32     # completions per rollout (one per prompt; no groups -- critic is baseline)
-    steps: int = 400               # optimizer steps (rollouts)
-    inner_epochs: int = 4          # PPO reuses each rollout for several clipped update passes
-    lr: float = 1e-6               # actor LR
-    value_lr: float = 1e-5         # critic can learn faster than the actor
+    init_dir: str = SFT_CKPT_DIR  # policy + critic backbone + frozen reference init
+    init_run: str | None = None  # None = latest run under init_dir
+    prompt_pool: int = 20_000  # instruct-train prompts to sample rollouts from
+    prompts_per_step: int = 32  # completions per rollout (one per prompt)
+    steps: int = 400  # optimizer steps (rollouts)
+    inner_epochs: int = 4  # PPO reuses each rollout for several clipped update passes
+    lr: float = 1e-6  # actor LR
+    value_lr: float = 1e-5  # critic can learn faster than the actor
     warmup_steps: int = 20
     weight_decay: float = 0.0
-    beta1: float = 0.9   # Adam betas
+    beta1: float = 0.9  # Adam betas
     beta2: float = 0.95
     grad_clip: float = 1.0
-    clip_eps: float = 0.2          # PPO ratio + value clip range
-    vf_coef: float = 0.5           # weight of the value loss in the total objective
-    kl_beta: float = 0.02          # per-token KL(policy||ref) penalty folded into the reward
-    gamma: float = 1.0             # discount (1.0: short episodes, no far-future discounting)
-    lam: float = 0.95              # GAE lambda (bias/variance trade-off)
+    clip_eps: float = 0.2  # PPO ratio + value clip range
+    vf_coef: float = 0.5  # weight of the value loss in the total objective
+    kl_beta: float = 0.02  # per-token KL(policy||ref) penalty folded into the reward
+    gamma: float = 1.0  # discount (1.0: short episodes, no far-future discounting)
+    lam: float = 0.95  # GAE lambda (bias/variance trade-off)
     temperature: float = 1.0
     top_k: int = 200
     top_p: float = 0.95
@@ -111,7 +104,11 @@ def rollout(
     torch.Tensor,
     float,
 ]:
-    """Sample one completion per prompt; return the padded batch + rollout tensors."""
+    """
+    Sample one completion per prompt
+    
+    Return: The padded batch + rollout tensors.
+    """
     idx = torch.randint(len(pool), (cfg.prompts_per_step,)).tolist()
     examples, rewards = [], []
     for pi in idx:
@@ -122,7 +119,7 @@ def rollout(
             out = policy.generate(
                 x, n_new, temperature=cfg.temperature, top_k=cfg.top_k, top_p=cfg.top_p
             )
-        gen = out[0].tolist()[len(prompt_ids):]
+        gen = out[0].tolist()[len(prompt_ids) :]
         inp, lab, story = build_rollout_example(prompt_ids, gen, tok.eos_id, tok)
         r = shaped_reward(prompt_text, story, rep_weight=cfg.rep_weight, n=REP_NGRAM)
         examples.append((torch.tensor(inp), torch.tensor(lab)))
@@ -142,11 +139,10 @@ def rollout(
 def compute_gae(
     rewards, values, mask, old_logp, ref_logp, cfg: "PPOConfig"
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-token reward shaping + GAE; returns normalized advantages and returns.
+    """
+    Per-token reward shaping + GAE (Generalized Advantage Estimation).
 
-    Reward per response token is the KL penalty; the scalar reward lands on each
-    sequence's last response token. Advantages come from GAE over the value
-    baseline, then are normalized across the batch's response tokens.
+    Returns: Normalized advantages and returns.
     """
     N, T = mask.shape
     m = mask.float()
@@ -157,21 +153,37 @@ def compute_gae(
     adv = torch.zeros_like(values)
     lastgae = torch.zeros(N, device=values.device)
     for t in reversed(range(T)):
-        next_val = values[:, t + 1] if t + 1 < T else torch.zeros(N, device=values.device)
+        next_val = (
+            values[:, t + 1] if t + 1 < T else torch.zeros(N, device=values.device)
+        )
         nonterm = m[:, t + 1] if t + 1 < T else torch.zeros(N, device=values.device)
         delta = r[:, t] + cfg.gamma * next_val * nonterm - values[:, t]
         lastgae = delta + cfg.gamma * cfg.lam * nonterm * lastgae
         adv[:, t] = lastgae
     adv = adv * m
-    returns = adv + values  # critic target (only response positions are used in the loss)
+    returns = (
+        adv + values
+    )  # critic target (only response positions are used in the loss)
 
     sel = mask.bool()
-    adv[sel] = (adv[sel] - adv[sel].mean()) / (adv[sel].std() + 1e-8)  # normalize advantages
+    adv[sel] = (adv[sel] - adv[sel].mean()) / (
+        adv[sel].std() + 1e-8
+    )  # normalize advantages
     return adv, returns
 
 
 def ppo_losses(
-    policy, value_model, x, y, mask, adv, returns, old_logp, old_values, ctx, cfg: "PPOConfig"
+    policy,
+    value_model,
+    x,
+    y,
+    mask,
+    adv,
+    returns,
+    old_logp,
+    old_values,
+    ctx,
+    cfg: "PPOConfig",
 ) -> tuple[torch.Tensor, float, float]:
     """Clipped actor surrogate + clipped value loss for one update pass."""
     with ctx:
@@ -181,10 +193,14 @@ def ppo_losses(
     n = m.sum().clamp(min=1)
 
     ratio = torch.exp(new_logp - old_logp)
-    surr = torch.min(ratio * adv, torch.clamp(ratio, 1 - cfg.clip_eps, 1 + cfg.clip_eps) * adv)
+    surr = torch.min(
+        ratio * adv, torch.clamp(ratio, 1 - cfg.clip_eps, 1 + cfg.clip_eps) * adv
+    )
     actor_loss = -(surr * m).sum() / n
 
-    v_clipped = old_values + (new_values - old_values).clamp(-cfg.clip_eps, cfg.clip_eps)
+    v_clipped = old_values + (new_values - old_values).clamp(
+        -cfg.clip_eps, cfg.clip_eps
+    )
     v_loss = torch.max((new_values - returns) ** 2, (v_clipped - returns) ** 2)
     value_loss = 0.5 * (v_loss * m).sum() / n
 
@@ -206,8 +222,12 @@ def train_ppo(cfg: PPOConfig = PPOConfig()) -> None:
     value_model = ValueModel(critic_backbone).to(device)
     gpt_cfg = policy.cfg
 
-    opt_policy = configure_optimizers(policy, cfg.weight_decay, cfg.lr, (cfg.beta1, cfg.beta2), device)
-    opt_value = configure_optimizers(value_model, cfg.weight_decay, cfg.value_lr, (cfg.beta1, cfg.beta2), device)
+    opt_policy = configure_optimizers(
+        policy, cfg.weight_decay, cfg.lr, (cfg.beta1, cfg.beta2), device
+    )
+    opt_value = configure_optimizers(
+        value_model, cfg.weight_decay, cfg.value_lr, (cfg.beta1, cfg.beta2), device
+    )
 
     tok = Tokenizer()
     max_prompt = gpt_cfg.block_size - cfg.max_new_tokens
@@ -229,7 +249,9 @@ def train_ppo(cfg: PPOConfig = PPOConfig()) -> None:
     value_model.train()
 
     for step in range(cfg.steps):
-        lr_p = cosine_lr(step, cfg.warmup_steps, cfg.steps, cfg.lr, cfg.lr)  # warmup then constant
+        lr_p = cosine_lr(
+            step, cfg.warmup_steps, cfg.steps, cfg.lr, cfg.lr
+        )  # warmup then constant
         lr_v = cosine_lr(step, cfg.warmup_steps, cfg.steps, cfg.value_lr, cfg.value_lr)
         for grp in opt_policy.param_groups:
             grp["lr"] = lr_p
@@ -244,17 +266,32 @@ def train_ppo(cfg: PPOConfig = PPOConfig()) -> None:
         a_loss = v_loss = 0.0
         for _ in range(cfg.inner_epochs):
             loss, a_loss, v_loss = ppo_losses(
-                policy, value_model, x, y, mask, adv, returns, old_logp, old_values, ctx, cfg
+                policy,
+                value_model,
+                x,
+                y,
+                mask,
+                adv,
+                returns,
+                old_logp,
+                old_values,
+                ctx,
+                cfg,
             )
             scaler.scale(loss).backward()
             optimizer_step(
                 scaler,
-                [(opt_policy, policy.parameters()), (opt_value, value_model.parameters())],
+                [
+                    (opt_policy, policy.parameters()),
+                    (opt_value, value_model.parameters()),
+                ],
                 cfg.grad_clip,
             )
 
         mean_reward = rewards.mean().item()
-        ema_reward = mean_reward if ema_reward is None else 0.9 * ema_reward + 0.1 * mean_reward
+        ema_reward = (
+            mean_reward if ema_reward is None else 0.9 * ema_reward + 0.1 * mean_reward
+        )
 
         if step % cfg.log_interval == 0:
             left = cfg.steps - step
@@ -266,15 +303,18 @@ def train_ppo(cfg: PPOConfig = PPOConfig()) -> None:
                 f"resp {resp_len:.0f}t | lr {lr_p:.1e}/{lr_v:.1e} | "
                 f"{elapsed:.1f} min, ~{eta:.1f} left"
             )
-            log_metrics(run_dir, {
-                "step": step,
-                "reward": round(mean_reward, 4),
-                "ema_reward": round(ema_reward, 4),
-                "actor_loss": round(a_loss, 4),
-                "value_loss": round(v_loss, 4),
-                "resp_len": round(resp_len, 1),
-                "lr": lr_p,
-            })
+            log_metrics(
+                run_dir,
+                {
+                    "step": step,
+                    "reward": round(mean_reward, 4),
+                    "ema_reward": round(ema_reward, 4),
+                    "actor_loss": round(a_loss, 4),
+                    "value_loss": round(v_loss, 4),
+                    "resp_len": round(resp_len, 1),
+                    "lr": lr_p,
+                },
+            )
 
         if ema_reward > best_reward:
             best_reward = ema_reward
@@ -282,11 +322,15 @@ def train_ppo(cfg: PPOConfig = PPOConfig()) -> None:
         if step % cfg.ckpt_interval == 0 or step == cfg.steps - 1:
             save_checkpoint(last_path, policy, opt_policy, step, best_reward, gpt_cfg)
 
-    png = plot_series(run_dir, "step", [
-        ("reward", ["reward", "ema_reward"]),
-        ("value loss", ["value_loss"]),
-        ("actor loss", ["actor_loss"]),
-    ])
+    png = plot_series(
+        run_dir,
+        "step",
+        [
+            ("reward", ["reward", "ema_reward"]),
+            ("value loss", ["value_loss"]),
+            ("actor loss", ["actor_loss"]),
+        ],
+    )
     print(
         f"done. best ema reward {best_reward:.3f}. checkpoints in {run_dir}/"
         + (f" (curve: {png})" if png else "")

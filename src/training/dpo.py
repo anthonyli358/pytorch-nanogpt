@@ -1,19 +1,9 @@
-"""Direct Preference Optimization (DPO) on the SFT checkpoint (step 10).
+"""
+Direct Preference Optimization (DPO) on the SFT checkpoint.
 
-Offline preference learning: no reward model, no sampling loop, no critic. The
+Offline preference learning with no reward model, no sampling loop, and no critic. The
 policy is initialized from SFT and trained against a *frozen* reference clone of
 the same SFT model, on ``(chosen, rejected)`` pairs from ``make_preferences.py``.
-
-The objective is
-    L = -log sigmoid( beta * [ (logp_pi(y_w) - logp_ref(y_w))
-                             - (logp_pi(y_l) - logp_ref(y_l)) ] )
-where ``logp(y)`` is the summed log-prob of the response tokens (``sequence_logprob``),
-using the same prompt masking as SFT. Raising a chosen completion's advantage
-over the reference while lowering the rejected one's; the reference term bakes a
-KL leash into the loss so the policy can't wander far from SFT.
-
-Reuses the optimizer / cosine-schedule / autocast / checkpoint machinery from the
-pretraining and SFT loops. Deliverable: ``checkpoints/dpo/<run>/best.pt`` (``dpo.pt``).
 """
 
 import time
@@ -31,7 +21,6 @@ from src.config import (
     DPO_CKPT_DIR,
     DPO_DATA_DIR,
     PAIRS_FILE,
-    DPO_MAX_LEN,
     SEED,
 )
 from src.data.dpo_data import DPODataset, dpo_collate
@@ -49,10 +38,8 @@ from src.training.rl_common import sequence_logprob
 
 @dataclass
 class DPOConfig:
-    """DPO trainer hyperparameters (init from an SFT run; sensitive, LR well below SFT).
-
-    Shared optimizer knobs (betas, seed), paths, and DPO_MAX_LEN (also read by
-    eval/winrate) stay in src/config.py.
+    """
+    DPO trainer hyperparameters (init from an SFT run).
     """
 
     init_run: str | None = None   # SFT run to init policy + frozen reference from (None = latest)
@@ -72,9 +59,11 @@ class DPOConfig:
 
 
 def dpo_loss(policy, reference, x, y, beta, ctx):
-    """DPO loss + diagnostics for one ``(2B, T)`` batch (chosen first, then rejected).
+    """
+    DPO loss + diagnostics for one `(2B, T)` batch.
+    The batch arranges with all chosen pairs first, then rejected for easy splitting.
 
-    Returns ``(loss, accuracy, margin)`` where accuracy is the fraction of pairs
+    Returns `(loss, accuracy, margin)` where accuracy is the fraction of pairs
     the policy already prefers correctly and margin is the mean reward gap.
     """
     b = x.size(0) // 2
@@ -111,7 +100,7 @@ def evaluate_dpo(policy, reference, loader, beta, ctx, device):
 
 
 def train_dpo(cfg: DPOConfig = DPOConfig()) -> None:
-    """Run epoch-based DPO with per-epoch eval, best/last checkpoints, early stop."""
+    """Run epoch-based DPO with per-epoch eval and best/last checkpoints with early stopping."""
     torch.manual_seed(SEED)
     device, ctx, scaler = setup_amp()
 
@@ -132,7 +121,7 @@ def train_dpo(cfg: DPOConfig = DPOConfig()) -> None:
 
     # Data: preference pairs -> masked (chosen, rejected) examples, split for val.
     tok = Tokenizer()
-    max_len = min(DPO_MAX_LEN or gpt_cfg.block_size, gpt_cfg.block_size)
+    max_len = gpt_cfg.block_size
     pairs_path = Path(DPO_DATA_DIR) / PAIRS_FILE
     if not pairs_path.exists():
         raise FileNotFoundError(

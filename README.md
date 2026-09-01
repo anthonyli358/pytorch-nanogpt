@@ -27,10 +27,8 @@ its continuation. There's no clean input -> output, they're the same stream of t
 
 # TODO
 
-1. clean up training/ folder
-2. config.py
-3. find a home for make_preferences and reward.py - add make_preferences to main.py
-4. README.MD
+1. find a home for make_preferences and reward.py
+2. README.MD
 
 ## Part I — Pretraining
 
@@ -214,6 +212,12 @@ Make sure we can view the output sentences (like in generate_story.py) and the o
 Need to reduce gameability, and include a verifiable reward metric for fluency.
 
 
+The objective is
+    L = -log sigmoid( beta * [ (logp_pi(y_w) - logp_ref(y_w))
+                             - (logp_pi(y_l) - logp_ref(y_l)) ] )
+where ``logp(y)`` is the summed log-prob of the response tokens (``sequence_logprob``),
+
+
 --- win-rate: DPO vs SFT (500 held-out prompts, K=4) ---
 pass-rate   SFT 0.834   DPO 0.981
 win-rate    0.744  (372 win / 9 loss / 119 tie)  |  >= SFT on 0.982
@@ -271,6 +275,11 @@ It only sharpens the existing distribution (which is why we SFT first - in this 
 
 Apply a KL penalty on the objective, and GAE for the advantage. 
 
+Advantages come from GAE over the valuebaseline, then are normalized across the batch's response tokens.
+    The reward model produces one scalar for the whole response and applies 
+    that scalar to the very last response token, whilst the KL penalty applies 
+    to every generated token.GAE reshapes how we estimate the advantage, normalized over the response tokens.
+
 **Recommended:** GRPO with verifiable rewards. Treat PPO as optional "build the
 full classic stack for the education."
 
@@ -285,6 +294,34 @@ Both consume the same shaped reward and frozen SFT reference, so you can grade t
 That reframes your repetition question usefully: the base sets the diversity ceiling (0.92), and the real target for DPO/GRPO/PPO is getting distinct2 back up toward it while keeping pass-rate high. 
 
 Instruction following decreases the diversity from free-flow story genereation.
+
+PPO
+Everything GRPO drops, added back. Each step:
+
+1. **Rollout.** Sample prompts, one completion each from the policy; record the
+   old per-token log-probs, the reference log-probs, and the critic's per-token
+   values.
+2. **Reward.** A per-token KL penalty `-beta*(logp_policy - logp_ref)` at every
+   response token, plus the scalar shaped reward added at the final (EOS) token --
+   the standard RLHF token-reward shaping.
+3. **GAE.** Generalized Advantage Estimation over the response tokens using the
+   critic's value baseline (this is what GRPO replaces with a group mean).
+4. **Update.** `inner_epochs` passes of a clipped actor surrogate + a clipped
+   value loss, actor and critic on separate optimizers/LRs.
+
+
+GRPO
+1. **Rollout.** Sample a batch of instruct prompts; for each, sample a *group* of
+   `G` completions from the current policy.
+2. **Reward.** Score every completion with the shaped reward (verifiable word
+   inclusion minus a repetition penalty -- `src.reward.shaped_reward`).
+3. **Advantage.** Normalize each reward against its group: `A = (r - mean) / std`.
+   No value network -- the group mean is the baseline. A group whose completions
+   all score the same has zero advantage and contributes no gradient.
+4. **Update.** A clipped PPO surrogate on the response tokens, with a per-token
+   KL leash to the frozen reference (the SFT model), so the policy improves reward
+   without drifting into the reward-hacking degeneracy step 13 catches.
+
 
 ### 13. Post-training eval
 Three things, not one number:

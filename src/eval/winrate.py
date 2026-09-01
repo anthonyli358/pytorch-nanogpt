@@ -8,7 +8,6 @@ import torch
 
 from src.config import (
     DATA_DIR,
-    DPO_MAX_LEN,
     CONTEXT_LEN,
     REP_NGRAM,
     CKPT_DIR,
@@ -286,7 +285,7 @@ def run_eval(
         print(f"{label:<5} {p}")
     cfg = models[base_label].cfg
     tok = Tokenizer()
-    max_len = min(DPO_MAX_LEN or cfg.block_size, cfg.block_size)
+    max_len = cfg.block_size
     max_prompt = cfg.block_size - PREF_MIN_NEW_TOKENS
     print(f"device {device} | baseline {base_label} | candidates {list(models)[1:]}")
 

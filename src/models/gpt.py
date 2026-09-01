@@ -150,3 +150,38 @@ class GPT(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
+
+
+def test_gpt(cfg: GPTConfig | None = None, seed: int = 0) -> GPT:
+    """
+    Build an untrained GPT and print param counts, init loss, and a sample shape.
+
+    A quick smoke test that the model wires up: the init loss should sit near
+    `ln(vocab_size)` (a uniform next-token distribution) and generation should
+    return a well-shaped tensor.
+
+    Args:
+        cfg: Model config; a default `GPTConfig` if None.
+        seed: Manual seed for reproducible init and random inputs.
+
+    Returns:
+        The freshly initialised model (left in eval mode).
+    """
+    torch.manual_seed(seed)
+    cfg = cfg or GPTConfig()
+    model = GPT(cfg)
+    print(f"total params        : {model.num_params(non_embedding=False):,}")
+    print(f"non-embedding params: {model.num_params():,}")
+
+    x = torch.randint(0, cfg.vocab_size, (2, 64))
+    y = torch.randint(0, cfg.vocab_size, (2, 64))
+    _, loss = model(x, y)
+    print(f"init loss: {loss.item():.4f}  (expect ~ ln(vocab) = {math.log(cfg.vocab_size):.4f})")
+
+    model.eval()
+    out = model.generate(torch.zeros((1, 1), dtype=torch.long), max_new_tokens=8, top_k=50)
+    print("generate out shape:", tuple(out.shape))
+    return model
+
+if __name__ == "__main__":
+    test_gpt()

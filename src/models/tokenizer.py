@@ -97,7 +97,9 @@ class Tokenizer:
             max_sentence_length=max_sentence_length,
             num_threads=os.cpu_count() or 4,
         )
-        return cls(model_path)
+        tok = cls(model_path)
+        print(f"tokenizer ready: vocab_size={tok.vocab_size}, eos_id={tok.eos_id}")
+        return tok
 
     def encode(self, text: str, add_eos: bool = False) -> list[int]:
         """Encode text to token ids.
