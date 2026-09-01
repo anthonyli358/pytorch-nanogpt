@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from src.config import DATA_DIR
 from src.data.sft_data import download_instruct, parse_records
 from src.models.tokenizer import Tokenizer
-from src.reward import parse_instruction
+from src.eval.reward import parse_instruction
 
 
 def token_logprobs(model, x: torch.Tensor, y: torch.Tensor):

@@ -314,7 +314,7 @@ GRPO
 1. **Rollout.** Sample a batch of instruct prompts; for each, sample a *group* of
    `G` completions from the current policy.
 2. **Reward.** Score every completion with the shaped reward (verifiable word
-   inclusion minus a repetition penalty -- `src.reward.shaped_reward`).
+   inclusion minus a repetition penalty -- `src.eval.reward.shaped_reward`).
 3. **Advantage.** Normalize each reward against its group: `A = (r - mean) / std`.
    No value network -- the group mean is the baseline. A group whose completions
    all score the same has zero advantage and contributes no gradient.

@@ -3,7 +3,7 @@ from src.data.pack import pack_data
 from src.eval.winrate import run_eval
 from src.inference.generate import generate
 from src.inference.speculative import compare_decoding
-from src.make_preferences import make_preferences
+from src.data.make_preferences import make_preferences
 from src.models.gpt import test_gpt
 from src.models.tokenizer import Tokenizer
 from src.training.pretrain import train as pretrain

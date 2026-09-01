@@ -125,7 +125,7 @@ def train_dpo(cfg: DPOConfig = DPOConfig()) -> None:
     pairs_path = Path(DPO_DATA_DIR) / PAIRS_FILE
     if not pairs_path.exists():
         raise FileNotFoundError(
-            f"{pairs_path} not found -- run `python -m src.make_preferences` first"
+            f"{pairs_path} not found -- run `python -m src.data.make_preferences` first"
         )
     full_ds = DPODataset(pairs_path, tok, max_len)
     n_val = max(1, int(len(full_ds) * cfg.val_fraction)) if len(full_ds) > 1 else 0

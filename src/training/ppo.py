@@ -34,7 +34,7 @@ from src.models.checkpoints import (
 )
 from src.models.gpt import GPT
 from src.models.tokenizer import Tokenizer
-from src.reward import shaped_reward
+from src.eval.reward import shaped_reward
 from src.training.common import (
     setup_amp,
     cosine_lr,

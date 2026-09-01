@@ -1,19 +1,14 @@
-"""Generate DPO preference pairs from the SFT model (finishes step 9).
+"""
+Generate DPO preference pairs from the SFT model.
 
-Loads the finished SFT checkpoint and, for each instruct-train prompt that
-carries a verifiable ``Words:`` field, samples ``K`` completions at temperature
-> 0 for diversity. Each completion is scored by the programmatic word-inclusion
-reward; when the best and worst scores differ (a reward spread), the pair
-``(prompt, best, worst)`` is emitted. Ties carry no learning signal and are
-skipped.
-
-Runs *after* SFT -- the sampler is the SFT policy every later stage regularizes
-against. Deliverable: ``data/dpo/pairs.jsonl``, consumed by ``dpo_train.py``.
+Loads the finished SFT checkpoint and samples `K` completions at temperature
+> 0 for diversity. Each completion is scored by the programmatic reward
 """
 
 import json
 import time
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -30,50 +25,64 @@ from src.config import (
 from src.data.sft_data import download_instruct, parse_records
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint
 from src.models.tokenizer import Tokenizer
-from src.reward import parse_instruction, verifiable_reward, repetition_penalty
+from src.eval.reward import parse_instruction, verifiable_reward, repetition_penalty
 from src.training.common import resolve_device_dtype
 
-# Preference-generation knobs (step 9): sample K completions per instruct prompt.
-PREF_INIT_RUN = None                # SFT run to sample from (None = latest under SFT_CKPT_DIR)
-PREF_NUM_PROMPTS = 5000             # instruct-train prompts (with a Words: field) to sample from
-PREF_SAMPLES_PER_PROMPT = 4         # K completions per prompt
-PREF_TEMPERATURE = 1.0              # > 0 for diversity across the K samples
-PREF_TOP_K = 200
-PREF_TOP_P = 0.95
-PREF_MAX_NEW_TOKENS = 256           # upper cap; actual = min(this, block_size - prompt_len); also read by eval/winrate.py
-PREF_MIN_NEW_TOKENS = 48            # skip a prompt if remaining context < this; also read by eval/winrate.py
-PREF_LOG_EVERY = 200               # progress print every N prompts processed
+
+@dataclass
+class PrefConfig:
+    """Preference-generation parameters."""
+
+    init_run: str | None = None  # SFT run to sample from (None = latest)
+    num_prompts: int = 5000  # instruct-train prompts (with a Words: field)
+    samples_per_prompt: int = 4  # K completions per prompt
+    temperature: float = 1.0  # > 0 for diversity across the K samples
+    top_k: int = 200
+    top_p: float = 0.95
+    max_new_tokens: int = 256  # upper cap
+    min_new_tokens: int = 48  # skip when the remaining context is smaller
+    log_every: int = 200  # progress print every N prompts processed
 
 
 @torch.no_grad()
 def sample_completions(
-    model, tok: Tokenizer, prompt_ids: list[int], k: int, max_new_tokens: int, ctx, device: str
+    model,
+    tok: Tokenizer,
+    prompt_ids: list[int],
+    k: int,
+    max_new_tokens: int,
+    ctx,
+    device: str,
+    temperature: float = 1.0,
+    top_k: int | None = 200,
+    top_p: float | None = 0.95,
 ) -> list[str]:
-    """Sample ``k`` completions for one prompt and return their decoded stories.
+    """
+    Sample `k` completions for one prompt and return their decoded stories.
 
-    The prompt is replicated into a batch of ``k`` so all samples generate in one
-    pass; each completion is trimmed at the first EOS (the story boundary).
+    Each completion is trimmed at the first EOS (the story boundary).
+    The prompt is replicated into a batch of `k` so all samples generate in one
+    pass. 
+
+    After reward scoring, when the best and worst scores differ (a reward spread), the pair
+    `(prompt, best, worst)` is emitted. Ties carry no learning signal and are skipped.
     """
     x = torch.tensor(prompt_ids, dtype=torch.long, device=device).expand(k, -1)
     with ctx:
         out = model.generate(
-            x,
-            max_new_tokens,
-            temperature=PREF_TEMPERATURE,
-            top_k=PREF_TOP_K,
-            top_p=PREF_TOP_P,
+            x, max_new_tokens, temperature=temperature, top_k=top_k, top_p=top_p
         )
     stories = []
     for row in out.tolist():
-        gen = row[len(prompt_ids):]  # newly generated ids only
+        gen = row[len(prompt_ids) :]  # newly generated ids only
         if tok.eos_id in gen:
             gen = gen[: gen.index(tok.eos_id)]  # stop at the first story boundary
         stories.append(tok.decode(gen).strip())
     return stories
 
 
-def make_preferences() -> None:
-    """Sample, score, and write preference pairs to ``data/dpo/pairs.jsonl``."""
+def make_preferences(cfg: PrefConfig = PrefConfig()) -> None:
+    """Sample, score, and write preference pairs to `data/dpo/pairs.jsonl`."""
     torch.manual_seed(SEED)
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
@@ -83,18 +92,18 @@ def make_preferences() -> None:
         else nullcontext()
     )
 
-    init_ckpt = resolve_checkpoint(PREF_INIT_RUN, "best.pt", SFT_CKPT_DIR)
+    init_ckpt = resolve_checkpoint(cfg.init_run, "best.pt", SFT_CKPT_DIR)
     model, _ = load_checkpoint(init_ckpt, device)
     model.eval()
-    cfg = model.cfg
+    gpt_cfg = model.cfg
     tok = Tokenizer()
     # Keep prompt + completion within the model's context (the SFT training regime):
-    # generate up to the remaining room, capped at PREF_MAX_NEW_TOKENS, and skip a
-    # prompt only when too little room is left for a story (< PREF_MIN_NEW_TOKENS).
-    max_prompt = cfg.block_size - PREF_MIN_NEW_TOKENS
+    # generate up to the remaining room, capped at cfg.max_new_tokens, and skip a
+    # prompt only when too little room is left for a story (< cfg.min_new_tokens).
+    max_prompt = gpt_cfg.block_size - cfg.min_new_tokens
     print(
-        f"sampling from {init_ckpt} | K={PREF_SAMPLES_PER_PROMPT} T={PREF_TEMPERATURE} "
-        f"top_k={PREF_TOP_K} top_p={PREF_TOP_P} on {device}"
+        f"sampling from {init_ckpt} | K={cfg.samples_per_prompt} T={cfg.temperature} "
+        f"top_k={cfg.top_k} top_p={cfg.top_p} on {device}"
     )
 
     paths = download_instruct(DATA_DIR)
@@ -113,9 +122,18 @@ def make_preferences() -> None:
                 skipped += 1
                 continue
 
-            n_new = min(PREF_MAX_NEW_TOKENS, cfg.block_size - len(prompt_ids))
+            n_new = min(cfg.max_new_tokens, gpt_cfg.block_size - len(prompt_ids))
             stories = sample_completions(
-                model, tok, prompt_ids, PREF_SAMPLES_PER_PROMPT, n_new, ctx, device
+                model,
+                tok,
+                prompt_ids,
+                cfg.samples_per_prompt,
+                n_new,
+                ctx,
+                device,
+                cfg.temperature,
+                cfg.top_k,
+                cfg.top_p,
             )
             # Rank by the SHAPED score (verifiable reward minus a repetition penalty)
             # so that on a word-inclusion tie the less-repetitive completion is
@@ -133,31 +151,36 @@ def make_preferences() -> None:
                 best = max(scored, key=lambda t: t[0])
                 worst = min(scored, key=lambda t: t[0])
                 if best[0] > worst[0] + 1e-6:  # spread in the shaped score
-                    fout.write(json.dumps({
-                        "prompt": prompt,
-                        "chosen": best[2],
-                        "rejected": worst[2],
-                        "chosen_reward": round(best[1], 4),
-                        "rejected_reward": round(worst[1], 4),
-                        "chosen_score": round(best[0], 4),
-                        "rejected_score": round(worst[0], 4),
-                    }) + "\n")
+                    fout.write(
+                        json.dumps(
+                            {
+                                "prompt": prompt,
+                                "chosen": best[2],
+                                "rejected": worst[2],
+                                "chosen_reward": round(best[1], 4),
+                                "rejected_reward": round(worst[1], 4),
+                                "chosen_score": round(best[0], 4),
+                                "rejected_score": round(worst[0], 4),
+                            }
+                        )
+                        + "\n"
+                    )
                     pairs += 1
                 else:
                     ties += 1
             else:
                 ties += 1
 
-            if seen % PREF_LOG_EVERY == 0:
-                left = PREF_NUM_PROMPTS - seen
+            if seen % cfg.log_every == 0:
+                left = cfg.num_prompts - seen
                 elapsed = time.time() - start
                 eta_min = left / (seen / elapsed) / 60 if seen else 0.0
                 print(
-                    f"  {seen:,}/{PREF_NUM_PROMPTS:,} prompts ({left:,} left) | "
+                    f"  {seen:,}/{cfg.num_prompts:,} prompts ({left:,} left) | "
                     f"{pairs:,} pairs | {ties:,} ties | {skipped:,} skipped | "
                     f"{elapsed / 60:.1f} min elapsed, ~{eta_min:.1f} min left"
                 )
-            if seen >= PREF_NUM_PROMPTS:
+            if seen >= cfg.num_prompts:
                 break
 
     print(

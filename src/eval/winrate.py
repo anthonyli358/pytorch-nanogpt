@@ -20,10 +20,10 @@ from src.data.sft_data import download_instruct, parse_records
 from src.data.common import build_example, pad_batch
 from src.eval.perplexity import evaluate_split
 from src.training.rl_common import sequence_logprob
-from src.make_preferences import sample_completions, PREF_MAX_NEW_TOKENS, PREF_MIN_NEW_TOKENS
+from src.data.make_preferences import sample_completions
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint, latest_run_dir
 from src.models.tokenizer import Tokenizer
-from src.reward import parse_instruction, verifiable_reward, distinct_ngram_ratio
+from src.eval.reward import parse_instruction, verifiable_reward, distinct_ngram_ratio
 from src.training.common import resolve_device_dtype
 
 # Eval-protocol knobs -- one config applied uniformly to every model in the sweep,
@@ -36,6 +36,8 @@ WINRATE_LOG_EVERY = 50          # progress print every N prompts
 WINRATE_SEED = 1234             # eval-only seed (held-out prompts, deliberately distinct from SEED)
 WINRATE_RESULTS_FILE = "winrate.json"
 WINRATE_SAMPLE_DUMP = 6         # side-by-side generations (greedy) to print for eyeballing
+GEN_MAX_NEW_TOKENS = 256        # cap on completion length when sampling for eval
+GEN_MIN_NEW_TOKENS = 48         # skip a prompt when the remaining context is smaller than this
 
 # Comparison set: grade every present stage against the baseline (dirs from config).
 WINRATE_BASELINE = ("SFT", SFT_CKPT_DIR, None)   # (label, checkpoint dir, run or None=latest)
@@ -68,7 +70,7 @@ def held_out_prompts(
         ids = tok.encode(prompt)
         if not ids or len(ids) > max_prompt:
             continue
-        yield prompt, ids, min(PREF_MAX_NEW_TOKENS, cfg.block_size - len(ids))
+        yield prompt, ids, min(GEN_MAX_NEW_TOKENS, cfg.block_size - len(ids))
 
 
 def _mean_reward(prompt: str, stories: list[str]) -> float | None:
@@ -286,7 +288,7 @@ def run_eval(
     cfg = models[base_label].cfg
     tok = Tokenizer()
     max_len = cfg.block_size
-    max_prompt = cfg.block_size - PREF_MIN_NEW_TOKENS
+    max_prompt = cfg.block_size - GEN_MIN_NEW_TOKENS
     print(f"device {device} | baseline {base_label} | candidates {list(models)[1:]}")
 
     results = {"baseline": base_label, "checkpoints": {k: str(v) for k, v in paths.items()}}
