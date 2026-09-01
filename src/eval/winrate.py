@@ -1,22 +1,3 @@
-"""Post-training evaluation suite: grade the whole ladder in one command (step 13).
-
-Compares every post-training stage that exists -- DPO, GRPO, PPO -- against the
-SFT **baseline**, on HELD-OUT instruct-valid prompts (never the train prompts the
-preference pairs were built from). Absent stages are skipped, so this runs as soon
-as any stage is trained and grows richer as more land.
-
-Three checks per stage:
-
-1. **Win-rate** (verifiable reward): K completions per model per prompt; the mean
-   reward is the per-prompt score; win = stage beats SFT on that prompt.
-2. **KL(stage || SFT)** on the stage's own samples -- the over-optimization gauge.
-3. **Regression**: validation perplexity vs SFT (reusing ``evaluate_split``), plus
-   a side-by-side greedy generation dump to eyeball that stories didn't degrade.
-
-Run: ``python -m src.eval.winrate``. Results go to ``eval_results/winrate.json``.
-"""
-
-import argparse
 import json
 import time
 from collections.abc import Iterator
@@ -67,7 +48,7 @@ def resolve_stage(label: str, ckpt_dir: str, run) -> Path | None:
 def held_out_prompts(
     tok: Tokenizer, cfg, max_prompt: int
 ) -> Iterator[tuple[str, list[int], int]]:
-    """Yield ``(prompt, prompt_ids, n_new)`` for valid prompts with a Words: field."""
+    """Yield (prompt, prompt_ids, n_new) for valid prompts with a Words: field."""
     paths = download_instruct(DATA_DIR)
     for prompt, _ in parse_records(paths["valid"]):
         if "words" not in parse_instruction(prompt):
@@ -89,7 +70,7 @@ def _mean_reward(prompt: str, stories: list[str]) -> float | None:
 def _sequence_kl(
     policy, reference, stories, prompt, tok, max_len, ctx, device
 ) -> tuple[float, float, int]:
-    """Estimate KL(policy || reference) on ``stories`` (samples from the policy)."""
+    """Estimate KL(policy || reference) on stories (samples from the policy)."""
     examples = []
     for s in stories:
         ex = build_example(tok, prompt, s, max_len)
@@ -108,9 +89,9 @@ def _sequence_kl(
 
 
 def run_winrate(models, base, tok, cfg, ctx, device, n_prompts, max_len, max_prompt) -> dict:
-    """Grade every stage in ``models`` against the ``base`` baseline in one sweep.
+    """Grade every stage in `models` against the `base` baseline in one sweep.
 
-    ``models`` maps label -> GPT (including the baseline). Returns per-stage
+    `models` maps label -> GPT (including the baseline). Returns per-stage
     pass-rate, and per-candidate win-rate / KL against the baseline.
     """
     names = list(models)
@@ -231,17 +212,33 @@ def run_samples(models, tok, cfg, ctx, device, n_dump, max_prompt) -> None:
             print(f"  {n:<5} (r={verifiable_reward(prompt, story):.2f}): {story}")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Post-training eval: SFT vs DPO/GRPO/PPO (step 13).")
-    ap.add_argument("--prompts", type=int, default=WINRATE_NUM_PROMPTS)
-    ap.add_argument("--samples", type=int, default=WINRATE_SAMPLE_DUMP,
-                    help="side-by-side greedy generations to print (0 to skip)")
-    ap.add_argument("--only", type=str, default=None,
-                    help="comma-separated stage labels to include (default: all present)")
-    ap.add_argument("--skip-winrate", action="store_true")
-    ap.add_argument("--skip-regression", action="store_true")
-    args = ap.parse_args()
+def run_eval(
+    n_prompts: int = WINRATE_NUM_PROMPTS,
+    n_samples: int = WINRATE_SAMPLE_DUMP,
+    only: set[str] | None = None,
+    skip_winrate: bool = False,
+    skip_regression: bool = False,
+) -> dict:
+    """Grade the SFT baseline against every present post-training stage.
 
+    Resolves the baseline plus each candidate stage that has a run, loads them,
+    and runs the win-rate / KL, perplexity-regression, and qualitative checks,
+    writing the combined results to ``eval_results/``.
+
+    Args:
+        n_prompts: Held-out prompts to grade for win-rate.
+        n_samples: Side-by-side greedy generations to print (0 to skip).
+        only: Restrict to these stage labels, or None for every present stage.
+        skip_winrate: Skip the win-rate / KL sweep.
+        skip_regression: Skip the perplexity regression check.
+
+    Returns:
+        The results dict that was also written to ``eval_results/``.
+
+    Raises:
+        FileNotFoundError: The baseline stage has no runs yet.
+        SystemExit: No candidate stages exist to grade (train one first).
+    """
     torch.manual_seed(WINRATE_SEED)
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
@@ -256,7 +253,6 @@ def main() -> None:
     if base_path is None:
         raise FileNotFoundError(f"baseline {base_label} has no runs under {base_dir}")
 
-    only = {s.strip() for s in args.only.split(",")} if args.only else None
     paths = {base_label: base_path}
     for label, ckpt_dir, run in WINRATE_MODELS:
         if only and label not in only:
@@ -282,20 +278,21 @@ def main() -> None:
     print(f"device {device} | baseline {base_label} | candidates {list(models)[1:]}")
 
     results = {"baseline": base_label, "checkpoints": {k: str(v) for k, v in paths.items()}}
-    if not args.skip_winrate:
+    if not skip_winrate:
         results["winrate"] = run_winrate(models, base_label, tok, cfg, ctx, device,
-                                         args.prompts, max_len, max_prompt)
-    if not args.skip_regression:
+                                         n_prompts, max_len, max_prompt)
+    if not skip_regression:
         results["regression"] = run_regression(models, base_label, ctx, device)
-    if args.samples > 0:
-        run_samples(models, tok, cfg, ctx, device, args.samples, max_prompt)
+    if n_samples > 0:
+        run_samples(models, tok, cfg, ctx, device, n_samples, max_prompt)
 
     out_dir = Path("eval_results")
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / WINRATE_RESULTS_FILE
     out_path.write_text(json.dumps(results, indent=2))
     print(f"\nsaved {out_path}")
+    return results
 
 
 if __name__ == "__main__":
-    main()
+    run_eval()

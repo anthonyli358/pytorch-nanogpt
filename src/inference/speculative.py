@@ -1,21 +1,3 @@
-"""Speculative decoding (Part I, step 8): trade a cheap draft for target throughput.
-
-The idea labs use to speed up token throughput without changing what the model
-would have said. A small **draft** model proposes ``gamma`` tokens autoregressively
-(cheap); the large **target** verifies all of them in a *single* forward pass and
-accepts the longest prefix that's consistent with its own distribution. On the
-first mismatch it resamples from a corrected distribution and discards the rest;
-if every drafted token is accepted it samples one bonus token for free. The
-output is distributed **exactly** as if sampled from the target alone -- the draft
-only affects speed, never the distribution -- so 1..gamma+1 tokens land per target
-forward instead of one.
-
-The algorithm is model-agnostic: any two :class:`GPT` checkpoints (a small draft,
-the full target) plug in. The correctness property that makes it exact -- for any
-draft ``q`` and target ``p``, one speculative step is distributed as ``p`` -- is
-what the test harness verifies.
-"""
-
 import time
 from contextlib import nullcontext
 
@@ -39,13 +21,14 @@ from src.models.tokenizer import Tokenizer
 from src.training.common import resolve_device_dtype
 
 
-def token_dist(logits: torch.Tensor, temperature: float, top_k: int | None, top_p: float | None) -> torch.Tensor:
+def token_dist(
+    logits: torch.Tensor, temperature: float, top_k: int | None, top_p: float | None
+) -> torch.Tensor:
     """Next-token probability vector after temperature / top-k / top-p filtering.
 
-    Returns a normalized ``(vocab,)`` distribution -- the *same* transform the
-    normal sampler applies, so draft and target distributions are comparable and
-    the acceptance ratio ``p(x)/q(x)`` is well defined. Temperature ``<= 0`` gives
-    a one-hot (greedy) distribution.
+    Returns a normalized `(vocab,)` distribution, so draft and target distributions 
+    are comparable and the acceptance ratio `p(x)/q(x)` is well defined. 
+    Temperature <= 0 gives a one-hot (greedy) distribution.
     """
     if temperature <= 0.0:
         probs = torch.zeros_like(logits)
@@ -84,10 +67,10 @@ def speculative_generate(
     device: str,
     eos_id: int | None = None,
 ):
-    """Generate from ``target`` using ``draft`` proposals; return ``(ids, stats)``.
+    """Generate from `target` using `draft` proposals; return `(ids, stats)`.
 
-    ``stats`` reports ``target_calls`` (target forward passes), ``new_tokens``, and
-    ``mean_accept_len`` = tokens per target call -- the speedup factor when the
+    `stats` reports `target_calls` (target forward passes), `new_tokens`, and
+    `mean_accept_len` = tokens per target call. The speedup factor when the
     draft is much cheaper than the target.
     """
     cur = list(prompt_ids)
@@ -106,7 +89,7 @@ def speculative_generate(
         q_dists: list[torch.Tensor] = []
         dctx = torch.tensor(window, dtype=torch.long, device=device)[None, :]
         for _ in range(gamma):
-            dlogits, _ = draft(dctx)              # inference path -> last-position logits
+            dlogits, _ = draft(dctx)  # inference path -> last-position logits
             q = token_dist(dlogits[0, -1], temperature, top_k, top_p)
             tok = int(torch.multinomial(q, 1))
             drafted.append(tok)
@@ -115,9 +98,9 @@ def speculative_generate(
 
         # 2) Target verifies all gamma proposals in ONE forward pass over the window.
         seq = torch.tensor(window + drafted, dtype=torch.long, device=device)[None, :]
-        tlogits = _target_logits(target, seq)    # (base_len + gamma, vocab)
+        tlogits = _target_logits(target, seq)  # (base_len + gamma, vocab)
         target_calls += 1
-        base = base_len - 1                       # logits[base + i] predicts drafted[i]
+        base = base_len - 1  # logits[base + i] predicts drafted[i]
 
         # 3) Accept the longest consistent prefix; correct-and-stop on the first reject.
         rejected = False
@@ -126,16 +109,21 @@ def speculative_generate(
             x = drafted[i]
             ratio = (p[x] / q_dists[i][x]).item() if q_dists[i][x] > 0 else 0.0
             if torch.rand(1, device=device).item() < min(1.0, ratio):
-                cur.append(x); new_tokens += 1; accepted += 1
+                cur.append(x)
+                new_tokens += 1
+                accepted += 1
                 if eos_id is not None and x == eos_id:
-                    done = True; break
+                    done = True
+                    break
                 if new_tokens >= max_new_tokens:
-                    done = True; break
+                    done = True
+                    break
             else:
-                corr = torch.clamp(p - q_dists[i], min=0.0)     # residual distribution
+                corr = torch.clamp(p - q_dists[i], min=0.0)  # residual distribution
                 corr = p if corr.sum() <= 0 else corr / corr.sum()
                 tok = int(torch.multinomial(corr, 1))
-                cur.append(tok); new_tokens += 1
+                cur.append(tok)
+                new_tokens += 1
                 if eos_id is not None and tok == eos_id:
                     done = True
                 rejected = True
@@ -145,7 +133,8 @@ def speculative_generate(
         if not rejected and not done and new_tokens < max_new_tokens:
             p = token_dist(tlogits[base + gamma], temperature, top_k, top_p)
             tok = int(torch.multinomial(p, 1))
-            cur.append(tok); new_tokens += 1
+            cur.append(tok)
+            new_tokens += 1
             if eos_id is not None and tok == eos_id:
                 done = True
 
@@ -158,8 +147,36 @@ def speculative_generate(
     return cur, stats
 
 
-def demo() -> None:
-    """Load target + draft checkpoints, generate, and report throughput vs vanilla."""
+def compare_decoding(
+    prompts: list[str] | None = None,
+    gamma: int = SPEC_GAMMA,
+    max_new_tokens: int = SPEC_MAX_NEW_TOKENS,
+    temperature: float = TEMPERATURE,
+    top_k: int | None = TOP_K,
+    top_p: float | None = TOP_P,
+) -> list[dict]:
+    """
+    Load target + draft checkpoints, generate, and report throughput vs vanilla.
+
+    A small draft model proposes `gamma` tokens autoregressively.
+    A larger target model verifies all of them in a single forward pass and
+    accepts the longest prefix that's consistent with its own distribution. On the
+    first mismatch it resamples from a corrected distribution and discards the rest
+
+    Args:
+        prompts: Prompts to benchmark, or None to use ``SAMPLE_PROMPTS``.
+        gamma: Draft tokens proposed per target verification pass.
+        max_new_tokens: Tokens to generate per prompt.
+        temperature: Sampling temperature (``<= 0`` is greedy).
+        top_k: Top-k filter, or None.
+        top_p: Top-p (nucleus) filter, or None.
+
+    Returns:
+        Per-prompt stats dicts (empty if no draft checkpoint is available), each
+        with the prompt, the ``speculative_generate`` stats, both timings (ms),
+        and the measured speedup.
+    """
+    prompts = SAMPLE_PROMPTS if prompts is None else prompts
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
     ctx = (
@@ -168,7 +185,9 @@ def demo() -> None:
         else nullcontext()
     )
 
-    target, _ = load_checkpoint(resolve_checkpoint(SPEC_TARGET_RUN, "best.pt", SPEC_TARGET_DIR), device)
+    target, _ = load_checkpoint(
+        resolve_checkpoint(SPEC_TARGET_RUN, "best.pt", SPEC_TARGET_DIR), device
+    )
     try:
         draft_path = resolve_checkpoint(SPEC_DRAFT_RUN, "best.pt", SPEC_DRAFT_DIR)
         draft, _ = load_checkpoint(draft_path, device)
@@ -177,40 +196,67 @@ def demo() -> None:
             f"No draft model under {SPEC_DRAFT_DIR!r}. Train a small one (a reduced "
             f"GPTConfig, e.g. n_layer=2, d_model=128) on the same corpus, then point "
             f"SPEC_DRAFT_DIR at it. The algorithm and its correctness tests run without "
-            f"one -- see `python -m src.inference.speculative --test`."
+            f"one -- see `python -m tests.speculative_test`."
         )
-        return
-    target.eval(); draft.eval()
+        return []
+    target.eval()
+    draft.eval()
     tok = Tokenizer()
-    print(f"target {target.num_params():,} params | draft {draft.num_params():,} params | "
-          f"gamma={SPEC_GAMMA} on {device}\n")
+    print(
+        f"target {target.num_params():,} params | draft {draft.num_params():,} params | "
+        f"gamma={gamma} on {device}\n"
+    )
 
-    for prompt in SAMPLE_PROMPTS:
+    results = []
+    for prompt in prompts:
         ids = tok.encode(prompt) or [tok.eos_id]
 
         with ctx:
             t0 = time.time()
-            out_v = target.generate(torch.tensor(ids, device=device)[None, :], SPEC_MAX_NEW_TOKENS,
-                                    temperature=TEMPERATURE, top_k=TOP_K, top_p=TOP_P)[0].tolist()
+            out_v = target.generate(
+                torch.tensor(ids, device=device)[None, :],
+                max_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+            )[0].tolist()
             t_vanilla = time.time() - t0
 
             t0 = time.time()
-            out_s, stats = speculative_generate(target, draft, ids, SPEC_MAX_NEW_TOKENS, SPEC_GAMMA,
-                                                TEMPERATURE, TOP_K, TOP_P, device, eos_id=tok.eos_id)
+            out_s, stats = speculative_generate(
+                target,
+                draft,
+                ids,
+                max_new_tokens,
+                gamma,
+                temperature,
+                top_k,
+                top_p,
+                device,
+                eos_id=tok.eos_id,
+            )
             t_spec = time.time() - t0
 
+        speedup = t_vanilla / max(1e-9, t_spec)
         print(f"--- prompt: {prompt!r} ---")
         print(f"speculative: {tok.decode(out_s)}")
-        print(f"  vanilla {t_vanilla * 1000:.0f} ms ({len(out_v) - len(ids)} tok) | "
-              f"speculative {t_spec * 1000:.0f} ms ({stats['new_tokens']} tok) | "
-              f"{stats['mean_accept_len']:.2f} tok/target-call | "
-              f"accept-rate {stats['accept_rate']:.2f} | speedup {t_vanilla / max(1e-9, t_spec):.2f}x\n")
+        print(
+            f"  vanilla {t_vanilla * 1000:.0f} ms ({len(out_v) - len(ids)} tok) | "
+            f"speculative {t_spec * 1000:.0f} ms ({stats['new_tokens']} tok) | "
+            f"{stats['mean_accept_len']:.2f} tok/target-call | "
+            f"accept-rate {stats['accept_rate']:.2f} | speedup {speedup:.2f}x\n"
+        )
+        results.append(
+            {
+                "prompt": prompt,
+                **stats,
+                "vanilla_ms": t_vanilla * 1000,
+                "spec_ms": t_spec * 1000,
+                "speedup": speedup,
+            }
+        )
+    return results
 
 
 if __name__ == "__main__":
-    import sys
-    if "--test" in sys.argv:
-        from src.inference.speculative_test import run_tests
-        run_tests()
-    else:
-        demo()
+    compare_decoding()
