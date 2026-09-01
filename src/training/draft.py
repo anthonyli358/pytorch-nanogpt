@@ -8,6 +8,7 @@ accepts. Reuses the pretraining machinery from ``training.common``; writes to
 
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -17,22 +18,7 @@ from src.config import (
     META_FILE,
     CONTEXT_LEN,
     SEED,
-    BATCH_SIZE,
-    GRAD_ACCUM_STEPS,
-    WEIGHT_DECAY,
-    BETA1,
-    BETA2,
-    GRAD_CLIP,
-    EVAL_INTERVAL,
-    LOG_INTERVAL,
     SPEC_DRAFT_DIR,
-    DRAFT_N_LAYER,
-    DRAFT_N_HEAD,
-    DRAFT_D_MODEL,
-    DRAFT_MAX_STEPS,
-    DRAFT_LR,
-    DRAFT_MIN_LR,
-    DRAFT_WARMUP_STEPS,
     GPTConfig,
 )
 from src.models.gpt import GPT
@@ -48,70 +34,115 @@ from src.training.common import (
 )
 
 
-def train_draft() -> None:
+@dataclass
+class DraftConfig:
+    """
+    Draft-model architecture + training schedule.
+
+    A small GPT on the same corpus/objective as pretraining, which
+    proposes tokens the target accepts. A better draft raises the acceptance rate (speedup).
+    """
+
+    n_layer: int = 2
+    n_head: int = 2  # d_model 128 / 2 = 64 head dim
+    d_model: int = 128
+    max_steps: int = 3000  # ~0.75 epoch, enough for a usable draft
+    batch_size: int = 64
+    lr: float = 6e-4
+    min_lr: float = 6e-5
+    warmup_steps: int = 100
+    weight_decay: float = 0.1
+    beta1: float = 0.9   # Adam betas
+    beta2: float = 0.95
+    grad_clip: float = 1.0
+    grad_accum_steps: int = 8       # effective batch = batch_size * grad_accum_steps
+    eval_interval: int = 500        # steps between val evals + checkpoints
+    log_interval: int = 20          # steps between train-loss logs
+
+
+def train_draft(cfg: DraftConfig = DraftConfig()) -> None:
     """Pretrain a small draft GPT on the packed corpus; save to SPEC_DRAFT_DIR."""
     torch.manual_seed(SEED)
     device, ctx, scaler = setup_amp()
 
     meta = json.loads((Path(PACKED_DIR) / META_FILE).read_text())
     block_size = CONTEXT_LEN
-    cfg = GPTConfig(
-        vocab_size=meta["vocab_size"], block_size=block_size,
-        n_layer=DRAFT_N_LAYER, n_head=DRAFT_N_HEAD, d_model=DRAFT_D_MODEL,
+    gpt_cfg = GPTConfig(
+        vocab_size=meta["vocab_size"],
+        block_size=block_size,
+        n_layer=cfg.n_layer,
+        n_head=cfg.n_head,
+        d_model=cfg.d_model,
     )
-    model = GPT(cfg).to(device)
-    optimizer = configure_optimizers(model, WEIGHT_DECAY, DRAFT_LR, (BETA1, BETA2), device)
+    model = GPT(gpt_cfg).to(device)
+    optimizer = configure_optimizers(
+        model, cfg.weight_decay, cfg.lr, (cfg.beta1, cfg.beta2), device
+    )
 
     run_dir = new_run_dir(SPEC_DRAFT_DIR)
     best_path, last_path = run_dir / "best.pt", run_dir / "last.pt"
     print(
         f"draft: {model.num_params():,} non-embedding params "
-        f"({DRAFT_N_LAYER}L/{DRAFT_N_HEAD}H/{DRAFT_D_MODEL}d) on {device}"
+        f"({cfg.n_layer}L/{cfg.n_head}H/{cfg.d_model}d) on {device}"
     )
-    print(f"run dir: {run_dir} | {DRAFT_MAX_STEPS:,} steps")
+    print(f"run dir: {run_dir} | {cfg.max_steps:,} steps")
 
     best_val = float("inf")
     model.train()
-    x, y = get_batch("train", block_size, BATCH_SIZE, device)
+    x, y = get_batch("train", block_size, cfg.batch_size, device)
     t0 = time.time()
 
-    for step in range(DRAFT_MAX_STEPS + 1):
-        lr = cosine_lr(step, DRAFT_WARMUP_STEPS, DRAFT_MAX_STEPS, DRAFT_LR, DRAFT_MIN_LR)
+    for step in range(cfg.max_steps + 1):
+        lr = cosine_lr(step, cfg.warmup_steps, cfg.max_steps, cfg.lr, cfg.min_lr)
         for g in optimizer.param_groups:
             g["lr"] = lr
 
-        if step % EVAL_INTERVAL == 0:
-            losses = estimate_loss(model, ctx, block_size, device)
-            print(f"step {step:>6}/{DRAFT_MAX_STEPS}: train {losses['train']:.4f} | "
-                  f"val {losses['valid']:.4f} | lr {lr:.2e}")
-            log_metrics(run_dir, {"step": step, "train_loss": round(losses["train"], 4),
-                                  "val_loss": round(losses["valid"], 4), "lr": lr})
+        if step % cfg.eval_interval == 0:
+            losses = estimate_loss(model, ctx, block_size, device, cfg.batch_size)
+            print(
+                f"step {step:>6}/{cfg.max_steps}: train {losses['train']:.4f} | "
+                f"val {losses['valid']:.4f} | lr {lr:.2e}"
+            )
+            log_metrics(
+                run_dir,
+                {
+                    "step": step,
+                    "train_loss": round(losses["train"], 4),
+                    "val_loss": round(losses["valid"], 4),
+                    "lr": lr,
+                },
+            )
             if losses["valid"] < best_val:
                 best_val = losses["valid"]
-                save_checkpoint(best_path, model, optimizer, step, best_val, cfg)
-            save_checkpoint(last_path, model, optimizer, step, best_val, cfg)
+                save_checkpoint(best_path, model, optimizer, step, best_val, gpt_cfg)
+            save_checkpoint(last_path, model, optimizer, step, best_val, gpt_cfg)
 
-        if step == DRAFT_MAX_STEPS:
+        if step == cfg.max_steps:
             break
 
-        for _ in range(GRAD_ACCUM_STEPS):
+        for _ in range(cfg.grad_accum_steps):
             with ctx:
                 _, loss = model(x, y)
-                loss = loss / GRAD_ACCUM_STEPS
-            x, y = get_batch("train", block_size, BATCH_SIZE, device)
+                loss = loss / cfg.grad_accum_steps
+            x, y = get_batch("train", block_size, cfg.batch_size, device)
             scaler.scale(loss).backward()
 
-        optimizer_step(scaler, [(optimizer, model.parameters())], GRAD_CLIP)
+        optimizer_step(scaler, [(optimizer, model.parameters())], cfg.grad_clip)
 
-        if step % LOG_INTERVAL == 0:
+        if step % cfg.log_interval == 0:
             dt = time.time() - t0
             t0 = time.time()
-            print(f"step {step:>6}/{DRAFT_MAX_STEPS} ({DRAFT_MAX_STEPS - step:,} left): "
-                  f"loss {loss.item() * GRAD_ACCUM_STEPS:.4f} | lr {lr:.2e} | "
-                  f"{dt / max(1, LOG_INTERVAL) * 1000:.0f} ms/step")
+            print(
+                f"step {step:>6}/{cfg.max_steps} ({cfg.max_steps - step:,} left): "
+                f"loss {loss.item() * cfg.grad_accum_steps:.4f} | lr {lr:.2e} | "
+                f"{dt / max(1, cfg.log_interval) * 1000:.0f} ms/step"
+            )
 
     png = plot_losses(run_dir, x="step")
-    print(f"done. best val {best_val:.4f}. checkpoints in {run_dir}/" + (f" (curve: {png})" if png else ""))
+    print(
+        f"done. best val {best_val:.4f}. checkpoints in {run_dir}/"
+        + (f" (curve: {png})" if png else "")
+    )
 
 
 if __name__ == "__main__":

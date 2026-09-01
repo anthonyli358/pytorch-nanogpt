@@ -27,9 +27,10 @@ its continuation. There's no clean input -> output, they're the same stream of t
 
 # TODO
 
-1. Retrain base for loss curve
-2. Retrain SFT
-3. Rerun eval/winrate.py
+1. clean up training/ folder
+2. config.py
+3. find a home for make_preferences and reward.py - add make_preferences to main.py
+4. README.MD
 
 ## Part I — Pretraining
 

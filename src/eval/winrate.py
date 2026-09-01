@@ -10,29 +10,42 @@ from src.config import (
     DATA_DIR,
     DPO_MAX_LEN,
     CONTEXT_LEN,
-    EVAL_BATCH_SIZE,
-    EVAL_MAX_BATCHES,
-    PREF_MAX_NEW_TOKENS,
-    PREF_MIN_NEW_TOKENS,
     REP_NGRAM,
-    WINRATE_BASELINE,
-    WINRATE_MODELS,
-    WINRATE_NUM_PROMPTS,
-    WINRATE_SAMPLES_PER_PROMPT,
-    WINRATE_SAMPLE_DUMP,
-    WINRATE_LOG_EVERY,
-    WINRATE_SEED,
-    WINRATE_RESULTS_FILE,
+    CKPT_DIR,
+    SFT_CKPT_DIR,
+    DPO_CKPT_DIR,
+    GRPO_CKPT_DIR,
+    PPO_CKPT_DIR,
 )
 from src.data.sft_data import download_instruct, parse_records
 from src.data.common import build_example, pad_batch
 from src.eval.perplexity import evaluate_split
 from src.training.rl_common import sequence_logprob
-from src.make_preferences import sample_completions
+from src.make_preferences import sample_completions, PREF_MAX_NEW_TOKENS, PREF_MIN_NEW_TOKENS
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint, latest_run_dir
 from src.models.tokenizer import Tokenizer
 from src.reward import parse_instruction, verifiable_reward, distinct_ngram_ratio
 from src.training.common import resolve_device_dtype
+
+# Eval-protocol knobs -- one config applied uniformly to every model in the sweep,
+# which is exactly what makes the comparison fair (so they belong together here).
+EVAL_BATCH_SIZE = 64            # batch size for the deterministic perplexity sweep
+EVAL_MAX_BATCHES = 200          # cap batches per split (None = full sweep); spread across the file
+WINRATE_NUM_PROMPTS = 500       # held-out valid prompts (with a Words: field) to evaluate
+WINRATE_SAMPLES_PER_PROMPT = 4  # completions per prompt per model; mean reward is the per-prompt score
+WINRATE_LOG_EVERY = 50          # progress print every N prompts
+WINRATE_SEED = 1234             # eval-only seed (held-out prompts, deliberately distinct from SEED)
+WINRATE_RESULTS_FILE = "winrate.json"
+WINRATE_SAMPLE_DUMP = 6         # side-by-side generations (greedy) to print for eyeballing
+
+# Comparison set: grade every present stage against the baseline (dirs from config).
+WINRATE_BASELINE = ("SFT", SFT_CKPT_DIR, None)   # (label, checkpoint dir, run or None=latest)
+WINRATE_MODELS = [
+    ("Base", CKPT_DIR, None),                    # pretrained floor: shows what SFT/post-training bought
+    ("DPO", DPO_CKPT_DIR, None),
+    ("GRPO", GRPO_CKPT_DIR, None),
+    ("PPO", PPO_CKPT_DIR, None),
+]
 
 
 def resolve_stage(label: str, ckpt_dir: str, run) -> Path | None:

@@ -5,17 +5,18 @@ import torch
 from huggingface_hub import hf_hub_download
 from torch.utils.data import Dataset
 
-from src.config import (
-    INSTRUCT_REPO_ID,
-    DATA_DIR,
-    EOS_MARKER,
-    INSTRUCT_FILE_SETS,
-    STORY_MARKER,
-    MAX_SFT_EXAMPLES,
-    SFT_BUILD_LOG_EVERY,
-)
+from src.config import DATA_DIR, EOS_MARKER
 from src.data.common import build_example
 from src.models.tokenizer import Tokenizer
+
+INSTRUCT_REPO_ID = "roneneldan/TinyStoriesInstruct"   # separate repo from the base data
+INSTRUCT_FILE_SETS = {
+    "train": "TinyStories-Instruct-train.txt",
+    "valid": "TinyStories-Instruct-valid.txt",
+}
+STORY_MARKER = "Story:"       # up to & incl. this = prompt (masked); after = response
+MAX_SFT_EXAMPLES = None       # cap examples per split (None = all); also read by training/sft.py
+SFT_BUILD_LOG_EVERY = 500_000 # progress print every N records while tokenizing the split
 
 
 def download_instruct(data_dir: str = DATA_DIR) -> dict[str, Path]:

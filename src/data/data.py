@@ -1,7 +1,9 @@
 from pathlib import Path
 from huggingface_hub import hf_hub_download
 
-from src.config import REPO_ID, DATA_DIR, EOS_MARKER, FILE_SETS
+from src.config import DATA_DIR, EOS_MARKER, FILE_SETS
+
+REPO_ID = "roneneldan/TinyStories"
 
 
 def download(data_dir: str = DATA_DIR) -> dict[str, Path]:

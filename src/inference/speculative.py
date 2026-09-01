@@ -4,21 +4,17 @@ from contextlib import nullcontext
 import torch
 import torch.nn.functional as F
 
-from src.config import (
-    SPEC_TARGET_DIR,
-    SPEC_TARGET_RUN,
-    SPEC_DRAFT_DIR,
-    SPEC_DRAFT_RUN,
-    SPEC_GAMMA,
-    SPEC_MAX_NEW_TOKENS,
-    SAMPLE_PROMPTS,
-    TEMPERATURE,
-    TOP_K,
-    TOP_P,
-)
+from src.config import SPEC_TARGET_DIR, SPEC_DRAFT_DIR
+from src.inference.generate import SAMPLE_PROMPTS, TEMPERATURE, TOP_K, TOP_P
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint
 from src.models.tokenizer import Tokenizer
 from src.training.common import resolve_device_dtype
+
+# Speculative-decoding knobs (SPEC_TARGET_DIR / SPEC_DRAFT_DIR paths stay in config).
+SPEC_TARGET_RUN = None   # None -> latest run under SPEC_TARGET_DIR
+SPEC_DRAFT_RUN = None    # None -> latest run under SPEC_DRAFT_DIR
+SPEC_GAMMA = 4           # draft tokens proposed per verification round
+SPEC_MAX_NEW_TOKENS = 200
 
 
 def token_dist(

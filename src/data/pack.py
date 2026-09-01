@@ -9,8 +9,6 @@ from src.config import (
     PACKED_DIR,
     PACKED_FILES,
     META_FILE,
-    PACK_BATCH_STORIES,
-    PACK_LOG_EVERY,
     CONTEXT_LEN,
 )
 from src.data.data import read_stories
@@ -23,8 +21,8 @@ def pack_split(
     tokenizer: Tokenizer,
     raw_path: Path,
     out_path: Path,
-    batch_stories: int = PACK_BATCH_STORIES,
-    log_every: int = PACK_LOG_EVERY,
+    batch_stories: int = 1024,
+    log_every: int = 200_000,
 ) -> tuple[int, int, np.ndarray]:
     """Encode one split and write it as a flat uint16 .bin.
 

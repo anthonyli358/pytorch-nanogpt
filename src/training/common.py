@@ -1,9 +1,5 @@
-"""Shared training machinery for every stage (pretrain, draft, SFT, DPO, GRPO, PPO).
-
-The pieces that used to be copied across the trainers -- device/dtype resolution,
-the AMP autocast+scaler setup, the cosine-with-warmup LR schedule, the optimizer
-step boilerplate -- plus the packed-corpus batching and optimizer construction
-that the pretraining loops share. One home, imported everywhere.
+"""
+Shared training machinery for every stage (pretrain, draft, SFT, DPO, GRPO, PPO).
 """
 
 import math
@@ -13,40 +9,25 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from src.config import (
-    PACKED_DIR,
-    PACKED_FILES,
-    BATCH_SIZE,
-    EVAL_ITERS,
-    DEVICE,
-    DTYPE,
-)
+from src.config import PACKED_DIR, PACKED_FILES
 
-_DTYPES = {
-    "float32": torch.float32,
-    "bfloat16": torch.bfloat16,
-    "float16": torch.float16,
-}
+EVAL_ITERS = 100  # batches averaged per eval-loss estimate (monitoring precision)
 
 
 def resolve_device_dtype() -> tuple[str, torch.dtype]:
-    """Pick the device and a supported autocast dtype, downgrading if needed."""
-    device = DEVICE or ("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = _DTYPES[DTYPE]
-    if dtype is torch.bfloat16 and not (
-        device.startswith("cuda") and torch.cuda.is_bf16_supported()
-    ):
+    """Auto-detect the device and a supported autocast dtype (bf16, downgrading if needed)."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16
+    if not (device.startswith("cuda") and torch.cuda.is_bf16_supported()):
         dtype = torch.float16 if device.startswith("cuda") else torch.float32
-    if dtype is torch.float16 and not device.startswith("cuda"):
-        dtype = torch.float32
     return device, dtype
 
 
 def setup_amp() -> tuple[str, object, "torch.amp.GradScaler"]:
-    """Resolve the device and return ``(device, autocast_ctx, grad_scaler)``.
+    """Resolve the device and return `(device, autocast_ctx, grad_scaler)`.
 
-    ``ctx`` is a no-op on fp32; the scaler is only enabled for fp16 (bf16 needs no
-    loss scaling). Replaces the identical setup block every trainer used to repeat.
+    `ctx` is only enabled for fp16 (used for controllable ranges), 
+    whilst bf16 needs no loss scaling and is better for stability. 
     """
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
@@ -60,10 +41,10 @@ def setup_amp() -> tuple[str, object, "torch.amp.GradScaler"]:
 
 
 def cosine_lr(step: int, warmup: int, total: int, peak: float, floor: float) -> float:
-    """Linear warmup then cosine decay from ``peak`` to ``floor`` over ``total`` steps.
+    """
+    Linear warmup then cosine decay from `peak` to `floor` over `total` steps.
 
-    Passing ``floor == peak`` gives warmup-then-constant (what GRPO/PPO use); the
-    six per-trainer LR schedules all collapse to this one function.
+    Passing `floor == peak` gives warmup, then constant lr (what GRPO/PPO use).
     """
     if step < warmup:
         return peak * (step + 1) / warmup
@@ -74,10 +55,11 @@ def cosine_lr(step: int, warmup: int, total: int, peak: float, floor: float) -> 
 
 
 def optimizer_step(scaler, updates, grad_clip: float) -> None:
-    """Unscale, clip, step, update, and zero -- after the caller's ``backward()``.
+    """
+    Unscale, clip, step, update, and zero after the caller's `backward()`.
 
-    ``updates`` is a list of ``(optimizer, params)`` pairs: one for most stages,
-    two for PPO (actor + critic, sharing one scaler). Clipping runs per param set.
+    `updates` is a list of `(optimizer, params)` pairs - one for most stages
+    and two for PPO (actor + critic, sharing one scaler).
     """
     if grad_clip and grad_clip > 0:
         for opt, _ in updates:
@@ -91,26 +73,40 @@ def optimizer_step(scaler, updates, grad_clip: float) -> None:
         opt.zero_grad(set_to_none=True)
 
 
-def get_batch(split: str, block_size: int, batch_size: int, device: str) -> tuple[torch.Tensor, torch.Tensor]:
-    """Sample a batch of random windows from a packed split.
+def get_batch(
+    split: str, block_size: int, batch_size: int, device: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Sample a batch of random windows from a packed split.
 
     The memmap is re-opened each call: this avoids a memory leak where the mapping
     accumulates references across a long training run.
 
     Returns:
-        ``(x, y)`` of shape ``(batch_size, block_size)``, ``y`` shifted by one.
+        `(x, y)` of shape `(batch_size, block_size)`, `y` is shifted by one.
     """
     path = Path(PACKED_DIR) / PACKED_FILES[split]
     data = np.memmap(path, dtype=np.uint16, mode="r")
     ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([torch.from_numpy(data[i : i + block_size].astype(np.int64)) for i in ix])
-    y = torch.stack([torch.from_numpy(data[i + 1 : i + 1 + block_size].astype(np.int64)) for i in ix])
+    x = torch.stack(
+        [torch.from_numpy(data[i : i + block_size].astype(np.int64)) for i in ix]
+    )
+    y = torch.stack(
+        [
+            torch.from_numpy(data[i + 1 : i + 1 + block_size].astype(np.int64))
+            for i in ix
+        ]
+    )
     if device.startswith("cuda"):
-        return x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
+        return x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(
+            device, non_blocking=True
+        )
     return x.to(device), y.to(device)
 
 
-def configure_optimizers(model, weight_decay: float, lr: float, betas: tuple[float, float], device: str) -> torch.optim.AdamW:
+def configure_optimizers(
+    model, weight_decay: float, lr: float, betas: tuple[float, float], device: str
+) -> torch.optim.AdamW:
     """Build AdamW with weight decay on 2D+ params only (not biases / norms)."""
     decay, no_decay = [], []
     for p in model.parameters():
@@ -122,18 +118,20 @@ def configure_optimizers(model, weight_decay: float, lr: float, betas: tuple[flo
         {"params": no_decay, "weight_decay": 0.0},
     ]
     fused = device.startswith("cuda")  # fused AdamW is a CUDA-only fast path
-    return torch.optim.AdamW(groups, lr=lr, betas=betas, **({"fused": True} if fused else {}))
+    return torch.optim.AdamW(
+        groups, lr=lr, betas=betas, **({"fused": True} if fused else {})
+    )
 
 
 @torch.no_grad()
-def estimate_loss(model, ctx, block_size: int, device: str) -> dict[str, float]:
-    """Average loss over ``EVAL_ITERS`` batches for each split."""
+def estimate_loss(model, ctx, block_size: int, device: str, batch_size: int) -> dict[str, float]:
+    """Average loss over `EVAL_ITERS` batches for each split."""
     out = {}
     model.eval()
     for split in ("train", "valid"):
         losses = torch.zeros(EVAL_ITERS)
         for k in range(EVAL_ITERS):
-            x, y = get_batch(split, block_size, BATCH_SIZE, device)
+            x, y = get_batch(split, block_size, batch_size, device)
             with ctx:
                 _, loss = model(x, y)
             losses[k] = loss.item()

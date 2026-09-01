@@ -25,22 +25,24 @@ from src.config import (
     PAIRS_FILE,
     REP_WEIGHT,
     REP_NGRAM,
-    PREF_INIT_RUN,
-    PREF_NUM_PROMPTS,
-    PREF_SAMPLES_PER_PROMPT,
-    PREF_TEMPERATURE,
-    PREF_TOP_K,
-    PREF_TOP_P,
-    PREF_MAX_NEW_TOKENS,
-    PREF_MIN_NEW_TOKENS,
-    PREF_LOG_EVERY,
-    PREF_SEED,
+    SEED,
 )
 from src.data.sft_data import download_instruct, parse_records
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint
 from src.models.tokenizer import Tokenizer
 from src.reward import parse_instruction, verifiable_reward, repetition_penalty
 from src.training.common import resolve_device_dtype
+
+# Preference-generation knobs (step 9): sample K completions per instruct prompt.
+PREF_INIT_RUN = None                # SFT run to sample from (None = latest under SFT_CKPT_DIR)
+PREF_NUM_PROMPTS = 5000             # instruct-train prompts (with a Words: field) to sample from
+PREF_SAMPLES_PER_PROMPT = 4         # K completions per prompt
+PREF_TEMPERATURE = 1.0              # > 0 for diversity across the K samples
+PREF_TOP_K = 200
+PREF_TOP_P = 0.95
+PREF_MAX_NEW_TOKENS = 256           # upper cap; actual = min(this, block_size - prompt_len); also read by eval/winrate.py
+PREF_MIN_NEW_TOKENS = 48            # skip a prompt if remaining context < this; also read by eval/winrate.py
+PREF_LOG_EVERY = 200               # progress print every N prompts processed
 
 
 @torch.no_grad()
@@ -72,7 +74,7 @@ def sample_completions(
 
 def make_preferences() -> None:
     """Sample, score, and write preference pairs to ``data/dpo/pairs.jsonl``."""
-    torch.manual_seed(PREF_SEED)
+    torch.manual_seed(SEED)
     device, pt_dtype = resolve_device_dtype()
     device_type = "cuda" if device.startswith("cuda") else "cpu"
     ctx = (

@@ -6,14 +6,11 @@ from src.config import (
     DATA_DIR,
     FILE_SETS,
     EOS_MARKER,
-    TOKENIZER_DIR,
-    MODEL_PREFIX,
     VOCAB_SIZE,
-    CHARACTER_COVERAGE,
-    INPUT_SENTENCE_SIZE,
-    MAX_SENTENCE_LENGTH,
 )
 
+TOKENIZER_DIR = "data/tokenizer"
+MODEL_PREFIX = "spm"  # data/tokenizer/spm.model + spm.vocab
 RAW_TRAIN = Path(DATA_DIR) / FILE_SETS["train"]
 MODEL_PATH = Path(TOKENIZER_DIR) / f"{MODEL_PREFIX}.model"
 
@@ -43,6 +40,9 @@ class Tokenizer:
         input_path: Path = RAW_TRAIN,
         tokenizer_dir: Path = Path(TOKENIZER_DIR),
         vocab_size: int = VOCAB_SIZE,
+        character_coverage: float = 1.0,
+        input_sentence_size: int = 2_000_000,
+        max_sentence_length: int = 8192,
         overwrite: bool = False,
     ) -> "Tokenizer":
         """Train a BPE model on the raw train text (or reuse a cached one) and load it.
@@ -59,6 +59,12 @@ class Tokenizer:
             tokenizer_dir: Directory to write spm.model and spm.vocab into.
             vocab_size: Target vocabulary size, including specials and the 256
                 byte-fallback pieces.
+            character_coverage: Fraction of characters the model must cover; 1.0
+                for clean English (byte_fallback covers the rest).
+            input_sentence_size: Subsample this many lines for training rather
+                than reading the full corpus.
+            max_sentence_length: Byte cap per training line; longer lines are
+                skipped.
             overwrite: If True, retrain even when a cached model exists.
 
         Returns:
@@ -77,7 +83,7 @@ class Tokenizer:
             model_prefix=str(model_prefix),
             model_type="bpe",
             vocab_size=vocab_size,
-            character_coverage=CHARACTER_COVERAGE,
+            character_coverage=character_coverage,
             byte_fallback=True,  # never emit <unk>; fall back to bytes
             user_defined_symbols=[EOS_MARKER],  # keep <|endoftext|> as one piece
             unk_id=0,
@@ -86,9 +92,9 @@ class Tokenizer:
             eos_id=-1,  # disable native BOS/EOS; use EOS_MARKER
             unk_piece="<unk>",
             pad_piece="<pad>",
-            input_sentence_size=INPUT_SENTENCE_SIZE,
+            input_sentence_size=input_sentence_size,
             shuffle_input_sentence=True,
-            max_sentence_length=MAX_SENTENCE_LENGTH,
+            max_sentence_length=max_sentence_length,
             num_threads=os.cpu_count() or 4,
         )
         return cls(model_path)

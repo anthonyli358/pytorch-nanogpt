@@ -2,19 +2,22 @@ from pathlib import Path
 
 import torch
 
-from src.config import (
-    CKPT_DIR,
-    CKPT_RUN,
-    DEVICE,
-    SAMPLE_PROMPTS,
-    MAX_NEW_TOKENS,
-    TEMPERATURE,
-    TOP_K,
-    TOP_P,
-)
-
+from src.config import CKPT_DIR
 from src.models.checkpoints import load_checkpoint, resolve_checkpoint
 from src.models.tokenizer import Tokenizer
+
+CKPT_RUN = None  # sample: None -> latest run's best.pt; or a run dir / .pt path
+
+# Default inference sampling knobs (call-site defaults, not global config).
+SAMPLE_PROMPTS = [
+    "Once upon a time,",
+    "One day, a little girl named Lily",
+    "Tom and Sara went to the park and",
+]
+MAX_NEW_TOKENS = 200
+TEMPERATURE = 0.8
+TOP_K = 200
+TOP_P = 0.95
 
 
 def sample_story(
@@ -55,7 +58,7 @@ def sample_story(
 
 
 def generate() -> None:
-    device = DEVICE or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model, ckpt = load_checkpoint(
         resolve_checkpoint(CKPT_RUN, "best.pt", CKPT_DIR), device
     )
