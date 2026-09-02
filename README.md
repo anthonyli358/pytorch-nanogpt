@@ -1,9 +1,72 @@
 # pytorch-nanogpt
-Pytorch implementation of a GPT style decoder
+Pytorch implementation of a decoder-only GPT.
 
-## Usage
+Trains a ~14M-parameter small language model end-to-end on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset,then explores the full modern post-training stack on [TinyStories Instruct](https://huggingface.co/datasets/roneneldan/TinyStoriesInstruct) with SFT (supervised fine-tuning) → DPO (direct policy optimization) → GRPO (group relative policy optimization) → PPO (proximal policy optimization).
 
-To use CUDA 12.6 for torch, we add the pytorch index as [described in the documentation](https://docs.astral.sh/uv/guides/integration/pytorch/#using-a-pytorch-index) to [pyproject.toml](pyproject.toml). 
+## Results
+
+After post-training, we evalute all the trained models with the SFT model as the baseline. For this we use 4 metrics:
+
+1. **pass-rate** - the verifiable reward we chose. It's the fraction of words which the model is instructed to use in story generation that it actually uses.
+2. **distinct-2** - distinct 2-grams / total 2-grams, a diversity proxy that catches repetitive, looping prose and tries to prevent reward hacking.
+3. **win-rate** - the fraction of held-out prompts on which the stage's mean reward (over k=4 completions) beats SFT's.
+4. **KL/tok** - per-token KL (Kullback–Leibler) divergence from the frozen SFT reference. It measures how far post-training has pulled the model from its starting distribution. A large KL is a diagnostic of over-optimization.
+
+| stage | pass-rate | distinct-2 | win-rate vs SFT | KL/tok |
+|---|---|---|---|---|
+| Base | 0.177 | **0.971** | 0.000 (≥ SFT on 0.004) | 1.822 |
+| SFT | 0.826 | 0.905 | — (baseline) | — |
+| **DPO** | **0.967** | **0.930** | **0.736** (≥ SFT on 0.970) | 0.028 |
+| GRPO | 0.950 | 0.920 | 0.694 (≥ SFT on 0.948) | 0.011 |
+| PPO | 0.867 | 0.907 | 0.492 (≥ SFT on 0.754) | 0.002 |
+
+For winrate, `≥ SFT` means that the model did at least as well as the SFT baseline i.e. the winrate including ties.
+
+The main finding is that SFT training on the base model is the main improvement in capability, already improving pass-rate from 0.18 to 0.83. The further post-training we performed gives further lift on top of that, but isn't as important as our SFT basleine.
+- The base model: It's the most diverse (distinct-2 0.971) because its been training solely on next token generation so it ignores the task itself. We only optimize from here so a high diversity is exactly what we want.
+- SFT: The most important functionality step and our baseline for post-training.
+- DPO: Gave the best results with the highest pass-rate (0.967) and diversity (0.930), at a tiny KL (0.028). It's also the cheapest and simplest method.
+- GRPO: A close second which achives numbers near that of DPO for about a third of the KL (0.011).
+- PPO: The heaviest method which performed much worse than the simpler methods (≥ SFT on 0.754) and with very little movement (KL 0.002).
+
+Even though eyeballing some sentences we might choose to prefer some GRPO results over DPO, on other examples the opposite is also true and the metrics do a good job of gauging the overall result quality. 
+
+# TODO: Sentence examples here
+
+The main takeaways from this implementation exercise are:
+- **Reward hacking is real and sneaky.** A verifiable "include these words" reward, optimized too hard, teaches the model to *cram words into repetitive, incoherent prose* while the pass-rate sits pinned at ~1.0. You cannot see it in the reward; you see it only when a quality metric rides alongside.
+- **Validation loss is a trap for RL over-optimization.** DPO for 2+ epochs kept the win-rate high while blowing validation perplexity up **+42%**. One epoch: **+2.9%**. The regression check caught what the training objective couldn't.
+- **KL-on-samples can understate the damage.** The measured KL from the reference looked modest even as perplexity on natural text rose 42% — the held-out perplexity check exposed drift the KL estimate missed.
+
+## Getting Started
+
+1. For GPU, go to the [pytorch](https://pytorch.org/get-started/locally/) website and select the local installs to get the bash command.
+
+2. To use this repo, [install uv](https://docs.astral.sh/uv/getting-started/installation/). We use the [pytorch index](https://docs.astral.sh/uv/guides/integration/pytorch/#using-a-pytorch-index) for CUDA 12.6 [in this project](pyproject.toml).
+
+3. Now install dependencies.
+
+```bash
+uv sync
+```
+
+4. The pipeline is driven from [src/main.py](src/main.py) which import each of the main functions which can also be run directly thanks to [hatchling](pyproject.toml). We can uncomment one stage at a time and run it as a module. 
+
+```bash
+uv run python -m src.main
+```
+
+5. The config [src/config.py](src/config.py) determines most of the runtime options.
+
+6. Each training run saves the best checkpoint (by validation loss) under `checkpoints/<stage>/<timestamp>/` and SFT checkpoints are required to run DPO/GRPO/PPO.
+
+7. The implementation for speculative-decoding is checked with [tests](tests/speculative_test.py).
+
+```bash
+uv run pytest
+```
+
+
 
 # TinyStories SLM — Project Roadmap
 
@@ -24,11 +87,6 @@ We use decoder only because story generation isn't sequence to sequence generati
 its continuation. There's no clean input -> output, they're the same stream of text.
 
 ---
-
-# TODO
-
-1. find a home for make_preferences and reward.py
-2. README.MD
 
 ## Part I — Pretraining
 
