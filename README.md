@@ -1,7 +1,7 @@
 # pytorch-nanogpt
 Pytorch implementation of a decoder-only GPT.
 
-Trains a ~14M-parameter small language model end-to-end on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset,then explores the full modern post-training stack on [TinyStories Instruct](https://huggingface.co/datasets/roneneldan/TinyStoriesInstruct) with SFT (supervised fine-tuning) → DPO (direct policy optimization) → GRPO (group relative policy optimization) → PPO (proximal policy optimization).
+Trains a ~14M-parameter small language model end-to-end on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset,then explores the full modern post-training stack on [TinyStories Instruct](https://huggingface.co/datasets/roneneldan/TinyStoriesInstruct) with SFT (supervised fine-tuning) → DPO (direct policy optimization) → GRPO (group relative policy optimization) / PPO (proximal policy optimization).
 
 ## Results
 
@@ -22,21 +22,45 @@ After post-training, we evalute all the trained models with the SFT model as the
 
 For winrate, `≥ SFT` means that the model did at least as well as the SFT baseline i.e. the winrate including ties.
 
-The main finding is that SFT training on the base model is the main improvement in capability, already improving pass-rate from 0.18 to 0.83. The further post-training we performed gives further lift on top of that, but isn't as important as our SFT basleine.
-- The base model: It's the most diverse (distinct-2 0.971) because its been training solely on next token generation so it ignores the task itself. We only optimize from here so a high diversity is exactly what we want.
-- SFT: The most important functionality step and our baseline for post-training.
-- DPO: Gave the best results with the highest pass-rate (0.967) and diversity (0.930), at a tiny KL (0.028). It's also the cheapest and simplest method.
-- GRPO: A close second which achives numbers near that of DPO for about a third of the KL (0.011).
-- PPO: The heaviest method which performed much worse than the simpler methods (≥ SFT on 0.754) and with very little movement (KL 0.002).
+---
 
-Even though eyeballing some sentences we might choose to prefer some GRPO results over DPO, on other examples the opposite is also true and the metrics do a good job of gauging the overall result quality. 
+The main finding is that SFT training on the base model gives most of the improvement in capability; improving pass-rate from 0.18 to 0.83. The further post-training we performed gives further lift on top of that, but isn't as important as our SFT basleine.
+- The **base** model: It's the most diverse (distinct-2 0.971) because its been training solely on next token generation so it ignores the task itself. We only optimize from here so a high diversity is exactly what we want.
+- **SFT**: The most important functionality step and our baseline for post-training.
+- **DPO**: Gave the best results with the highest pass-rate (0.967) and diversity (0.930), at a tiny KL (0.028). It's also the cheapest and simplest method.
+- **GRPO**: A close second which achives numbers near that of DPO for about a third of the KL (0.011).
+- **PPO**: The heaviest method which performed much worse than the simpler methods (≥ SFT on 0.754) and with very little movement (KL 0.002).
 
-# TODO: Sentence examples here
 
-The main takeaways from this implementation exercise are:
-- **Reward hacking is real and sneaky.** A verifiable "include these words" reward, optimized too hard, teaches the model to *cram words into repetitive, incoherent prose* while the pass-rate sits pinned at ~1.0. You cannot see it in the reward; you see it only when a quality metric rides alongside.
-- **Validation loss is a trap for RL over-optimization.** DPO for 2+ epochs kept the win-rate high while blowing validation perplexity up **+42%**. One epoch: **+2.9%**. The regression check caught what the training objective couldn't.
-- **KL-on-samples can understate the damage.** The measured KL from the reference looked modest even as perplexity on natural text rose 42% — the held-out perplexity check exposed drift the KL estimate missed.
+Even though eyeballing some sentences we might choose to prefer some GRPO results over DPO, on other examples the opposite is also true and the metrics do a decent job of gauging the overall result quality. 
+
+<details>
+<summary><b>Words: escape, war, tall</b> - we need the SFT to follow the task itself.</summary>
+
+> **Base** (r=0.00): army, army, army, army, army, army, army, army, army, army, army, army, army, army, army... *(collapses into a single repeated token)*
+> **SFT** (r=1.00): Tom and Lily were playing in the forest. They saw a big, tall tree house... "It's a war!" Tom said. "We need to escape!" ...They were safe. They said "Thank you, Ben. You are a good friend."
+> **DPO** (r=1.00): Once upon a time, there was a tall man named Tom... He went to the window and saw a big war... Lily said, "I want to escape from the scary house and find a place to live." ...They all lived together and had fun in the forest.
+> **GRPO** (r=1.00): Once upon a time, there was a tall man named Tom... Tom saw a big war with many people. They were all scared and wanted to escape... They met a nice man named Ben... They stayed with Ben and had a fun day.
+> **PPO** (r=1.00): Tom and Lily are friends... "We can escape from the house." ...It is very tall... "I am Ben. He is a war. He is a big war. He is mean. He is mean. He is mean..." *(pass-rate hit, but the tail loops)*
+
+</details>
+
+<details>
+<summary><b>Words: meet, waffle, new</b> — DPO and GRPO make more sense contextually.</summary>
+
+> **Base** (r=0.33): Words, new friends. *(ignores the task)*
+> **SFT** (r=0.67): Once upon a time, there was a little girl named Lily. She got a new waffle for breakfast... She saw a new friend named Timmy... "Yes, I met a new friend named Timmy."
+> **DPO** (r=1.00): ...She had a new waffle for breakfast... Lily decided to go outside and meet her new friend, Timmy... "Hi Timmy, do you want to meet me?" ...happy that she had met her new friend.
+> **GRPO** (r=1.00): ...She had a new waffle for breakfast... She saw a new friend in the park. Her new friend was a little boy named Max... Lily was happy to meet Max and they became good friends.
+> **PPO** (r=1.00): ...She loved waffles more than anything in the world... While playing, she saw a new friend. It was a big, fluffy dog... Lily was so happy to meet the new friend.
+</details>
+
+<br>
+
+
+Finally, the main takeaways from this implementation exercise are:
+- Reward hacking will generally find the gaps in any verifiable reward. A classic measurement type problem where we need to be consider is what we're measuring is actually representable of the outcome we want.
+- Similarly, for text-based problems it's important to consider multiple independent metrics. Pure validation loss on DPO training improved when training more than 1 epoch, but the validation perpexity increased from 2.9% to 42%. KL divergence alone didn't catch this.
 
 ## Getting Started
 
@@ -56,7 +80,7 @@ uv sync
 uv run python -m src.main
 ```
 
-5. The config [src/config.py](src/config.py) determines most of the runtime options.
+5. The config [src/config.py](src/config.py) determines most of the runtime options. It's important to determine `context_length` and `vocab_size` early as its best for it to be fixed end-to-end.
 
 6. Each training run saves the best checkpoint (by validation loss) under `checkpoints/<stage>/<timestamp>/` and SFT checkpoints are required to run DPO/GRPO/PPO.
 
@@ -66,133 +90,97 @@ uv run python -m src.main
 uv run pytest
 ```
 
+# Development
 
+We split the development into 2 main parts - pretraining and post-training. 
 
-# TinyStories SLM — Project Roadmap
-
-Building a small language model end-to-end from the HF TinyStories corpus:
-pretraining a decoder-only GPT, then exploring the post-training stack
+1. Pretraining implements a decoder-only GPT as its continuation vs sequence-to-sequence generation.
+2. We then explore the post-training stack
 (SFT → DPO → GRPO/PPO).
 
-**Guiding constraint:** on a ~10M-param model the quality ceiling is low, so
-post-training is about learning the *machinery*, not chasing big gains.
-TinyStories earns its place here because the instruction variant gives
-**verifiable rewards for free** — an ideal sandbox for GRPO.
+---
 
-Steps are ordered by dependency. Two numbers ripple through everything from
-step 3 onward and should be pinned in config early: **vocab size (8k)** and
-**context length (256)**.
+## Part I - Pretraining
 
-We use decoder only because story generation isn't sequence to sequence generation, 
-its continuation. There's no clean input -> output, they're the same stream of text.
+### 1. Data download
+ First we download the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset using [data.py](src/data/data.py).  This outputs `TinyStoriesV2-GPT4-train.txt` and `TinyStoriesV2-GPT4-valid.txt` with `<|endoftext|>` separators and automatic downloading/cache handling.
+
+ We follow much of Karpathy's [minGPT/nanoGPT](https://github.com/karpathy/mingpt) here.
+
+### 2. Tokenizer
+Next we train a SentencePiece BPE (byte pair encoding) [tokenizer](src/models/tokenizer.py) on the raw train text. We choose a vocab size of 8000 and `<|endoftext|doubles as both BOS and EOS tokens.
+
+We made the decision to increase `max_sentence_length` to 8192 so that all full stories are used, and sample 2M stories from the full 14.6M. Since the corpus is small and repetitive, this is both sufficient and more efficient to train the model, outputting `spm.model` and `spm.vocab`
+ 
+### 3. Preprocess / pack 
+
+Now we tokenize all the stories once and save the result. Then, by writing a [flat uint16 memmap](src/data/pack.py) (memory-mapped file) for both the train and validation splits (8k vocab fits in uint16), we can sample random slices at train time while the data stays on disk - keeping memory use low.
+
+While we have the whole corpus tokenized, we also measure the per-story token-length distribution to determine the context length.
+
+| split | tokens | stories | file |
+|---|---|---|---|
+| train | 530,386,257 | 2,717,700 | `data/packed/train.bin` |
+| valid | 5,355,994 | 27,631 | `data/packed/val.bin` |
+
+The median story is about 173 tokens and 89.3% of stories fit fully in 256 tokens which makes it a good choice for context length
+
+| p50 | p90 | p95 | p99 | max | mean |
+|---|---|---|---|---|---|
+| 173 | 263 | 364 | 560 | 1646 | 194.2 |
+
+### 4. Model
+
+We build a decoder-only [GPT](src/models/gpt.py). Every block uses masked (causal) self-attention, where the query (Q), keys (K) and values (V) all come from the token stream and the mask stops each position from attending to future tokens.
+
+The architecture is:
+- Token embedding + learned absolute positional embedding, summed, then dropout
+- **N = 6** pre-norm [blocks](src/models/block.py), each performing `x = x + attn(ln(x))` then `x = x + mlp(ln(x))`
+- A final LayerNorm normalizing the residual stream before the head
+- An LM head, `Linear(d_model → vocab)` with no bias, weight-tied to the token embedding (the same weights, shared)
+
+### 5. Training loop
+
+The loop ([pretrain.py](src/training/pretrain.py)) draws random fixed-length windows straight off the `uint16` memmap which makes the loop **stateless** and comes with some advantages:
+
+1. Resuming the run is simple - just continue sampling. This stateless loading was also reuseable in post-training.
+2. The same token can be seen at different positions which increases diversity.
+
+The downside is that random sampling means that we may never see certain tokens, but this is fine here because the corpus is large compared to the model and the problem is simple story generation.
+
+For optimization we use the standard GPT-2 recipe: 
+- **AdamW** with betas 0.9/0.95 and weight decay 0.1
+- **cosine learning-rate** decay with linear warmup
+- **gradient clipping** at 1.0 to cap the size of any single update and prevent destabilization from a bad batch
+
+We reach a large effective batch through **gradient accumulation** where we run several smaller microbatches, sum their gradients, and step the optimizer with the accumulated gradient. One pass on the 530M token corpus is ~4k steps (`batch 64 × accum 8 × context 256 = **131,072 tokens`)so a `max_steps` of 10k gives us about 2.5 epochs of training. We checkpoint every 500 steps.
+
+<p align="left">
+    <img src="outputs/base_loss.png" width="600"/>  
+</p>
+
+Thanks fo the size of the dataset compared to the size of the model, the train and validation track each other closely without overfitting. Validation loss flattens quickly.
+
+### 6. Sampling
+
+[Generation](src/inference/generate.py) is autoregressive - feed in the prompt, predict a distribution over the next token, sample one, append it, and repeat. We crop to the last `context_length` tokens each step and trim the output at the first EOS.
+
+One learning here was that sampling performed better than beam search or greedy generation. For open-ended story generation a higher diversity is better, and we can shape the distribution before drawing from it by adjusting `temperature` to scale the logits (lower is greedier and safer, higher is more diverse), and `top-k` to keep only the k most likely tokens. At temperature 0 this collapses to greedy decoding. 
+
+### 7. Evaluation
+
+The main metric we used for evaluation at this stage is [validation perplexity](src/eval/perplexity.py) - the `exp(mean cross-entropy)` which is the average per-token branching factor (how many tokens the model is effectively "choosing between"). A lower value is better here because it means that the model assigned a high probablility to the token which actually came next. 
+
+We evaluate on evenly-spaced windows across the whole split to keep the number deterministic and comparable run-to-run. The batches are capped at `max_batches` to keep evaluation cheap compared to the (~100× larger) train split.
+
+We deliberately left a larger LLM judge scoring grammar/consistency/creativity/the overall story out of scope here due to cost and the theoretical case that one doesn't exist yet.
+
+lower is better. Rather than a random sample, we score **evenly-spaced non-overlapping windows across the whole split** so the number is deterministic and representative run-to-run, with a `max_batches` cap that keeps evaluation cheap on the ~100× larger train split, and we token-weight the mean so partial final batches don't skew it.
+
 
 ---
 
-## Part I — Pretraining
-
-### 1. Data download ✓
-Raw `.txt` per split from the HF Hub, `<|endoftext|>` separators intact.
-Cache-backed, so re-runs are free. Deliverable: `data/raw/*.txt`.
-
-Output: `TinyStoriesV2-GPT4-train.txt` and `TinyStoriesV2-GPT4-valid.txt`
-
-### 2. Tokenizer ✓
-Train a SentencePiece BPE on the raw train text; wrap load/encode/decode in a
-thin `Tokenizer` class.
-- vocab **8k**, `model_type=bpe`, `byte_fallback=True` (never emit `<unk>`)
-- `<|endoftext|>` as a whole `user_defined_symbol`, doubling as BOS/EOS
-- subsample lines for training (no need for all ~2GB)
-
-A SentencePiece BPE tokenizer trained on the TinyStories train split. 
-
-- `vocab_size=8000` subword pieces is sufficient for the corpus.
-- **Sampling:** merges are learned from 2M lines randomly sampled
-  (`shuffle_input_sentence=True`) out of the full 14.6M. BPE merge frequencies
-  saturate quickly on a corpus this small and repetitive, so using more lines
-  doesn't meaningfully change the vocabulary.
-- **`max_sentence_length=8192`:** raised from the 4096-byte default so no full
-  stories are dropped during training. Only affects which lines contribute to
-  learning merges — `encode()` is never length-limited — and the extra memory
-  cost is trivial.
-- **`byte_fallback=True`:** unseen characters fall back to bytes, so the
-  tokenizer never emits `<unk>`.
-- **Special tokens:** `<|endoftext|>` is registered as a single user-defined
-  symbol (never split by BPE) and serves as the document / EOS boundary. Native
-  BOS/EOS are disabled — the model uses the `<|endoftext|>` id instead.
-
-Output: `spm.model` + `spm.vocab`.
-
-### 3. Preprocess / pack ✓
-Encode the whole corpus once to token IDs; write a flat `uint16` memmap per
-split (8k vocab fits `uint16`), inserting the EOS id between stories. nanoGPT
-pattern: pre-tokenize once, then sample random windows at train time.
-- **Also check the token-length distribution here** — settles whether 256 is
-  right or should be 192 / 384.
-
-Deliverable: `train.bin`, `val.bin`, `meta` (vocab size, EOS id).
-
-train: 530,386,257 tokens, 2,717,700 stories -> data\packed\train.bin
-valid: 5,355,994 tokens, 27,631 stories -> data\packed\val.bin
-
-=== train story token-length distribution ===
-p50:    173
-p90:    263
-p95:    364
-p99:    560
-max:   1646   mean:  194.2
-fraction of stories <= 256 tokens: 0.893
-
-256 is a good number for context length.
-
-
-### 4. Model ✓
-Decoder-only GPT. Prune the seq2seq transformer: keep `MultiHeadAttention`
-(with the causal mask from the old decoder self-attn), **drop cross-attention
-and the entire encoder**.
-- token embedding + positional (learned absolute is fine; RoPE optional)
-- N pre-norm causal blocks (attn + MLP)
-- final norm + LM head, **weight-tied** to the embedding
-- lots of data vs training size, so overfitting is unlikely
-- 384/6 = 64, 64 is the universal choice for the attention heads
-
-Target size (~10M params): `d_model≈384`, `n_layer≈6`, `n_head≈6`, `ctx≈256`.
-
-### 5. Training loop ✓
-Sample random windows from the memmap.
-- AdamW (betas 0.9/0.95, wd 0.1), cosine decay + linear warmup, grad clip 1.0
-- grad accumulation for effective batch; bf16 autocast on Ampere+
-- resumable checkpoints (save scheduler `state_dict` too), periodic val eval
-
-At batch 64 x accum 8 (gradient accumulation, it simiulates a large batch size when the GPU can't fit one, 
-run several smaller microbatches and sum the gradients and do optimizer step after accum) 
-x ctx (context length) 256 = 131 tokens/step, one epoch over 530M tokens is 4046 steps.
-The 10,000 MAX_STEPS is about 2.5 epochs
-
-### 6. Sampling ✓
-Autoregressive decode with temperature + top-k/top-p. Sampling, not beam
-search — this is open-ended generation. Prompt in → story out.
-
-Dont need epochs because we sample by concatenating every story into only long 
-array and drawing a batch of random windows (sampling with replacement) from it, 
-so we only need MAX_STEPS. Since there's replacement, there's no epochs.
-
-We follow Kaparthy's minGPT https://github.com/karpathy/mingpt. 
-
-This makes it stateless and resuming is trivial and decoupled from dataset size.
-This makes for a simpler loader and doesn't matter for our use case.
-
-This also helps with some diversity since tokens get seen at differen positions.
-Where coverage matters and we can't afford to miss any data, we might want coverage guarantee.
-
-### 7. Evaluation ✓
-- **Val perplexity** — day-to-day workhorse metric.
-- **TinyStories rubric** (grammar / consistency / creativity, graded by a
-  larger model) — the gold qualitative eval; wire up once samples are worth
-  grading. Defer; perplexity + eyeballing gets most of the early signal.
-
----
-
-## Part II — Post-training
+## Part II - Post-training
 
 Ordered offline/simple → online/hard, each stage independently useful.
 
@@ -275,42 +263,6 @@ The objective is
                              - (logp_pi(y_l) - logp_ref(y_l)) ] )
 where ``logp(y)`` is the summed log-prob of the response tokens (``sequence_logprob``),
 
-
---- win-rate: DPO vs SFT (500 held-out prompts, K=4) ---
-pass-rate   SFT 0.834   DPO 0.981
-win-rate    0.744  (372 win / 9 loss / 119 tie)  |  >= SFT on 0.982
-KL(DPO||SFT) 0.036 nats/tok (7.01 nats/seq)
-
---- regression: validation perplexity ---
-SFT 8.838   DPO 9.093   delta +0.255 (+2.89%)  [ok]
-
---- qualitative: 6 greedy SFT vs DPO generations ---
-downloading TinyStories-Instruct-train.txt ...
-downloading TinyStories-Instruct-valid.txt ...
-
-[1] Words: escape, war, tall
-  SFT (r=0.67): Tom and Lily are friends. They like to play in the forest. They see a big house. It is a house with a tall door. They want to go inside. But the door is closed. They are scared. They want to escape. They look for a way out. They see a big tree. The tree is green and has many leaves. They think it is a good place to live. They go inside the house. They are happy. They are safe. They say, "Hello, tree house. We are your friend." They hug the tree. They are happy. They are not scared anymore. They are friends. They like the tree house. They like the tree house. They like the tree house. They are happy. They are not alone. They are friends.
-  DPO (r=1.00): Tom and Lily are friends. They like to play in the forest. They see a big house in the distance. They want to go inside and see what is there. "Let's go in and see!" Tom says. "OK, but be careful. The house is very tall and scary. We have to escape," Lily says. They run to the house and open the door. They see a big war. The war is loud and scary. Tom and Lily are scared. They want to go back to the house. They see a big tree in the forest. The tree is very tall and has many branches. They want to climb it. They think they are brave. "Let's go in and see what is there," Tom says. "Maybe we can find a way to escape." They run to the tree and climb it. They see a hole in the tree. They see a hole and a hole. They are happy. They are safe. They are brave.
-
-[2] Words: meet, waffle, new
-  SFT (r=1.00): Once upon a time, there was a little girl named Lily. She loved waffles more than anything in the world. One day, she went to the park with her mom and dad. While they were playing, Lily saw a new friend. It was a little puppy! Lily was so happy to meet the new friend. She played with the puppy all day long. They ran and jumped and had so much fun. When it was time to go home, Lily said goodbye to her new friend and promised to come back and play again. Summary: Lily meets a new friend at the park and they have fun playing together before saying goodbye.
-  DPO (r=1.00): Once upon a time, there was a new waffle. It was big and red. The new waffle was very happy. It wanted to meet new friends. One day, the new waffle went to a new place. It was a big park with lots of trees and grass. The new waffle was excited to meet new friends. It walked and walked until it found a big tree. The new waffle met a little bird. The bird said, "Hi, I am new here. Do you want to be my friend?" The new waffle was happy and said, "Yes, I want to be your friend!" They played together in the park. The new waffle was very happy to meet a new friend. They had a lot of fun together. And they became best friends forever. Summary: A new waffle goes to a park and meets a little bird who becomes its friend, and they become best friends forever.
-
-[3] Words: call, leak, foolish
-  SFT (r=0.67): Lily and Ben are playing in the garden. They have a bucket and a shovel. They want to make a big splash. They fill the bucket with water from the hose. They are having fun. But then they see a leak in the bucket. The water is coming out of the bucket. It is a foolish leak. It makes a big mess. Lily and Ben are scared. They run to their Mum. She is not happy. She says, "What are you doing? You are foolish! You should not play with water in the bucket. It is not safe." Lily and Ben are sad. They cry. They say, "We are sorry, Mum. We will not play with water in the bucket again." They hug their Mum. They are sorry. They go to their room. They are still sad. They want to play with water. They want to make a new splash.
-  DPO (r=1.00): Lily and Ben are playing in the garden. They have a bucket and a bucket. They fill the bucket with water and splash it on the flowers. They are having fun. But then they see a leak in the bucket. The water is coming out of the bucket. It is a foolish leak. It makes a big mess. Lily and Ben are scared. They call their mom. "Mom, what is the leak?" Lily asks. "I don't know, sweetie. It is a leak. It makes water. It makes water for the flowers and the birds. But we don't want water. It is foolish. We should not play with water. It is not safe. We should call for help. We need to be careful. We should not play with water. We should call for help. We should have called for help. We should have called for help. We are in trouble. We are in trouble.
-
-[4] Words: point, stadium, fast
-  SFT (r=1.00): One day, a little girl named Lily went to the stadium with her dad. They were going to watch a game. Lily was very excited because she loved to watch the cars go fast. She saw a man point at a big red car. "Look, Dad! That car is so fast!" said Lily. "Yes, it is. Let's go see it," said her dad. They walked to the big red car. The man in the car was there. He was pointing at the cars. "Look, Lily! That car is so fast!" said the man. Lily and her dad watched the cars go fast. They laughed and clapped their hands. "That was so much fun!" said Lily. "Yes, it was," said her dad. They had a great time at the stadium.
-  DPO (r=1.00): Once upon a time, there was a little girl named Lily. She loved to go to the stadium with her dad. They would watch the cars go fast and then they would point at each other to see who was the fastest. One day, Lily's dad took her to the stadium to watch a game. They were going to watch a game of tag. Lily was so excited! She pointed at the other cars and said, "Look, Daddy! That's so cool!" As they were watching the game, Lily's dad noticed that the stadium was getting dark. He said, "Lily, it's time to go home now. We have to go now." Lily was sad to leave the stadium, but she knew they had to go home. She said, "Daddy, can we come back to the stadium soon?" Her dad smiled and said, "Of course, Lily. We can come back anytime you want." And they went home, happy and tired from their fun day at the stadium
-
-[5] Words: slide, switch, expensive
-  SFT (r=0.33): Lila and Ben are friends. They like to play in the park. One day, they see a big slide. They want to go on the slide. They run to the slide. They go down fast. They go so fast that they hit the wall. They hit the wall. They hit the wall. They were sad. They cry. They say sorry to each other. They hug and say sorry. They promise to help Tom. They go back to the slide. They go down the slide. They have fun. They are happy. They learn that it is not good to play with things that don't belong to them. They are friends.
-  DPO (r=1.00): Lila and Ben are friends. They like to play in the park. One day, they see a big slide. They want to go on the slide. They run to the slide. They go to the switch. They go to the switch. They turn the switch. The slide is expensive. They do not know what is happening. They do not know. They do not know what to do. They are scared. They do not want to go on the slide. They do not want to be alone. They do not want to be friends. They do not want to be friends. They do not know what to do. They do not know how to fix the switch. They do not know how to fix it. They do not know how. They are angry. They do not like the switch. They do not like the slide. They are sad. They do not like the expensive slide.
-
-[6] Words: call, tank, jolly
-  SFT (r=1.00): Once upon a time, there was a jolly little girl named Lily. She loved to play with her toys and her friends. One day, Lily and her friend Tom were playing with their toy cars. They were having so much fun that they didn't notice the big hill in their town. Suddenly, a big dog came running towards them. Lily and Tom were scared and didn't know what to do. But then, a kind man came and called for help. The man came and said, "Don't worry, I'll get your tank back." The man went to the store and bought a new tank for Lily and Tom. They were so happy and thanked the man. They played with the jolly dog and had a great time.
-  DPO (r=1.00): Once upon a time, there was a jolly little girl named Lily. She loved to play with her toy tank. One day, Lily's friend Tom came over to play. Tom wanted to play with Lily's tank, but Lily didn't want to share. Tom said, "Can I play with your tank, please?" Lily replied, "No, it's mine. I don't want to share." Tom got upset and called out, "Why won't you let me play with your tank?" Lily didn't want to fight, so she said, "Okay, I'll let you play with my tank." Tom was happy and they played together. They had so much fun that they forgot about the tank. Suddenly, a big dog came running towards them. The dog was very mean and wanted to take Lily's
 
 ### 11. Reward model *(only for the RLHF/PPO path)*
 A scalar reward head on the preference pairs via the Bradley-Terry loss.
@@ -395,11 +347,13 @@ worse. Exactly why a quality metric rides alongside the reward.
 
 ---
 
-## Config decisions to pin early
-| Decision | Value | Ripples into |
-|---|---|---|
-| Vocab size | 8k | `uint16` packing, embedding budget |
-| Context length | 256 | packing, positional embedding size |
-| Reward source | verifiable vs judge | whether step 11 is ever built |
-| Instruction schema | (set in step 8) | every later generate/score stage |
+## Resources
 
+- Radford et al., [*Improving Language Understanding by Generative Pre-Training*](https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf) (GPT, 2018)
+- Eldan & Li, [*TinyStories: How Small Can Language Models Be and Still Speak Coherent English?*](https://arxiv.org/abs/2305.07759) (2023)
+- Rafailov et al., [*Direct Preference Optimization*](https://arxiv.org/abs/2305.18290) (DPO, 2023)
+- Shao et al., [*DeepSeekMath*](https://arxiv.org/abs/2402.03300) (GRPO, 2024)
+- Schulman et al., [*Proximal Policy Optimization Algorithms*](https://arxiv.org/abs/1707.06347) (PPO, 2017)
+- Leviathan et al., [*Fast Inference from Transformers via Speculative Decoding*](https://arxiv.org/abs/2211.17192) (2023)
+- Karpathy, [minGPT](https://github.com/karpathy/minGPT) for the stateless-sampling training pattern
+- [SentencePiece](https://github.com/google/sentencepiece) for subword tokenisation
