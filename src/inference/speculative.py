@@ -215,6 +215,7 @@ def compare_decoding(
                 temperature=temperature,
                 top_k=top_k,
                 top_p=top_p,
+                eos_id=tok.eos_id,  # so lengths are comparable
             )[0].tolist()
             t_vanilla = time.time() - t0
 
@@ -233,22 +234,27 @@ def compare_decoding(
             )
             t_spec = time.time() - t0
 
-        speedup = t_vanilla / max(1e-9, t_spec)
+        # Per-token latency
+        van_tok = max(1, len(out_v) - len(ids))
+        spec_tok = max(1, stats["new_tokens"])
+        van_ms_per_tok = t_vanilla * 1000 / van_tok
+        spec_ms_per_tok = t_spec * 1000 / spec_tok
+        speedup = van_ms_per_tok / max(1e-9, spec_ms_per_tok)
         print(f"--- prompt: {prompt!r} ---")
         print(f"speculative: {tok.decode(out_s)}")
         print(
-            f"  vanilla {t_vanilla * 1000:.0f} ms ({len(out_v) - len(ids)} tok) | "
-            f"speculative {t_spec * 1000:.0f} ms ({stats['new_tokens']} tok) | "
+            f"  vanilla {van_ms_per_tok:.1f} ms/tok ({van_tok} tok) | "
+            f"speculative {spec_ms_per_tok:.1f} ms/tok ({spec_tok} tok) | "
             f"{stats['mean_accept_len']:.2f} tok/target-call | "
-            f"accept-rate {stats['accept_rate']:.2f} | speedup {speedup:.2f}x\n"
+            f"accept-rate {stats['accept_rate']:.2f} | speedup {speedup:.2f}x/tok\n"
         )
         results.append(
             {
                 "prompt": prompt,
                 **stats,
-                "vanilla_ms": t_vanilla * 1000,
-                "spec_ms": t_spec * 1000,
-                "speedup": speedup,
+                "vanilla_ms_per_tok": van_ms_per_tok,
+                "spec_ms_per_tok": spec_ms_per_tok,
+                "speedup_per_tok": speedup,
             }
         )
     return results

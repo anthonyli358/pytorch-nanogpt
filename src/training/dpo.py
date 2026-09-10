@@ -214,11 +214,11 @@ def train_dpo(cfg: DPOConfig = DPOConfig()) -> None:
                 break
         save_checkpoint(last_path, policy, optimizer, global_step, best_val, gpt_cfg)
 
+    # Loss inverse of the reward -log σ(β·margin), so it's redundant
     png = plot_series(run_dir, "step", [
-        ("DPO loss", ["loss"]),
         ("reward margin", ["margin"]),
         ("pref accuracy", ["acc"]),
-    ])
+    ], ema_cols={"margin", "acc"}, ema_alpha=0.35)
     print(
         f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/"
         + (f" (curve: {png})" if png else "")

@@ -178,7 +178,8 @@ def train_sft(cfg: SFTConfig = SFTConfig()) -> None:
         save_checkpoint(last_path, model, optimizer, global_step, best_val, gpt_cfg)
 
     png = plot_series(
-        run_dir, "step", [("SFT loss (masked response)", ["train_loss", "val_loss"])]
+        run_dir, "step", [("SFT loss (masked response)", ["train_loss", "val_loss"])],
+        ema_cols={"train_loss"}, ema_alpha=0.02,
     )
     print(
         f"done. best val loss {best_val:.4f}. checkpoints in {run_dir}/"

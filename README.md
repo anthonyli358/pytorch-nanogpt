@@ -1,7 +1,7 @@
 # pytorch-nanogpt
 Pytorch implementation of a decoder-only GPT.
 
-Trains a ~14M-parameter small language model end-to-end on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset,then explores the full modern post-training stack on [TinyStories Instruct](https://huggingface.co/datasets/roneneldan/TinyStoriesInstruct) with SFT (supervised fine-tuning) → DPO (direct policy optimization) → GRPO (group relative policy optimization) / PPO (proximal policy optimization).
+Trains a ~14M-parameter small language model end-to-end on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset, then explores the full modern post-training stack on [TinyStories Instruct](https://huggingface.co/datasets/roneneldan/TinyStoriesInstruct) with SFT (supervised fine-tuning) → DPO (direct policy optimization) → GRPO (group relative policy optimization) / PPO (proximal policy optimization).
 
 ## Results
 
@@ -24,11 +24,11 @@ For winrate, `≥ SFT` means that the model did at least as well as the SFT base
 
 ---
 
-The main finding is that SFT training on the base model gives most of the improvement in capability; improving pass-rate from 0.18 to 0.83. The further post-training we performed gives further lift on top of that, but isn't as important as our SFT basleine.
+The main finding is that SFT training on the base model gives most of the improvement in capability; improving pass-rate from 0.18 to 0.83. The further post-training we performed gives further lift on top of that, but isn't as important as our SFT baseline.
 - The **base** model: It's the most diverse (distinct-2 0.971) because its been training solely on next token generation so it ignores the task itself. We only optimize from here so a high diversity is exactly what we want.
 - **SFT**: The most important functionality step and our baseline for post-training.
 - **DPO**: Gave the best results with the highest pass-rate (0.967) and diversity (0.930), at a tiny KL (0.028). It's also the cheapest and simplest method.
-- **GRPO**: A close second which achives numbers near that of DPO for about a third of the KL (0.011).
+- **GRPO**: A close second which achieves numbers near that of DPO for about a third of the KL (0.011).
 - **PPO**: The heaviest method which performed much worse than the simpler methods (≥ SFT on 0.754) and with very little movement (KL 0.002).
 
 
@@ -59,8 +59,8 @@ Even though eyeballing some sentences we might choose to prefer some GRPO result
 
 
 Finally, the main takeaways from this implementation exercise are:
-- Reward hacking will generally find the gaps in any verifiable reward. A classic measurement type problem where we need to be consider is what we're measuring is actually representable of the outcome we want.
-- Similarly, for text-based problems it's important to consider multiple independent metrics. Pure validation loss on DPO training improved when training more than 1 epoch, but the validation perpexity increased from 2.9% to 42%. KL divergence alone didn't catch this.
+- Reward hacking will generally find the gaps in any verifiable reward. It's a classic measurement problem: we need to be sure that what we're measuring actually represents the outcome we want.
+- Similarly, for text-based problems it's important to consider multiple independent metrics. Pure validation loss on DPO training improved when training more than 1 epoch, but the validation perplexity increased from 2.9% to 42%. KL divergence alone didn't catch this.
 
 ## Getting Started
 
@@ -90,7 +90,7 @@ uv run python -m src.main
 uv run pytest
 ```
 
-# Development
+## Development
 
 We split the development into 2 main parts - pretraining and post-training. 
 
@@ -103,14 +103,14 @@ We split the development into 2 main parts - pretraining and post-training.
 ## Part I - Pretraining
 
 ### 1. Data download
- First we download the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset using [data.py](src/data/data.py).  This outputs `TinyStoriesV2-GPT4-train.txt` and `TinyStoriesV2-GPT4-valid.txt` with `<|endoftext|>` separators and automatic downloading/cache handling.
+First we download the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset using [data.py](src/data/data.py). This outputs `TinyStoriesV2-GPT4-train.txt` and `TinyStoriesV2-GPT4-valid.txt` with `<|endoftext|>` separators and automatic downloading/cache handling.
 
- We follow much of Karpathy's [minGPT/nanoGPT](https://github.com/karpathy/mingpt) here.
+We follow much of Karpathy's [minGPT/nanoGPT](https://github.com/karpathy/mingpt) here.
 
 ### 2. Tokenizer
-Next we train a SentencePiece BPE (byte pair encoding) [tokenizer](src/models/tokenizer.py) on the raw train text. We choose a vocab size of 8000 and `<|endoftext|doubles as both BOS and EOS tokens.
+Next we train a SentencePiece BPE (byte pair encoding) [tokenizer](src/models/tokenizer.py) on the raw train text. We choose a vocab size of 8000 and `<|endoftext|>` doubles as both BOS and EOS tokens.
 
-We made the decision to increase `max_sentence_length` to 8192 so that all full stories are used, and sample 2M stories from the full 14.6M. Since the corpus is small and repetitive, this is both sufficient and more efficient to train the model, outputting `spm.model` and `spm.vocab`
+We made the decision to increase `max_sentence_length` to 8192 so that all full stories are used, and sample 2M stories from the full 14.6M. Since the corpus is small and repetitive, this is both sufficient and more efficient to train the model, outputting `spm.model` and `spm.vocab`.
  
 ### 3. Preprocess / pack 
 
@@ -123,7 +123,7 @@ While we have the whole corpus tokenized, we also measure the per-story token-le
 | train | 530,386,257 | 2,717,700 | `data/packed/train.bin` |
 | valid | 5,355,994 | 27,631 | `data/packed/val.bin` |
 
-The median story is about 173 tokens and 89.3% of stories fit fully in 256 tokens which makes it a good choice for context length
+The median story is about 173 tokens and 89.3% of stories fit fully in 256 tokens, which makes it a good choice for context length.
 
 | p50 | p90 | p95 | p99 | max | mean |
 |---|---|---|---|---|---|
@@ -143,7 +143,7 @@ The architecture is:
 
 The loop ([pretrain.py](src/training/pretrain.py)) draws random fixed-length windows straight off the `uint16` memmap which makes the loop **stateless** and comes with some advantages:
 
-1. Resuming the run is simple - just continue sampling. This stateless loading was also reuseable in post-training.
+1. Resuming the run is simple - just continue sampling. This stateless loading was also reusable in post-training.
 2. The same token can be seen at different positions which increases diversity.
 
 The downside is that random sampling means that we may never see certain tokens, but this is fine here because the corpus is large compared to the model and the problem is simple story generation.
@@ -153,197 +153,162 @@ For optimization we use the standard GPT-2 recipe:
 - **cosine learning-rate** decay with linear warmup
 - **gradient clipping** at 1.0 to cap the size of any single update and prevent destabilization from a bad batch
 
-We reach a large effective batch through **gradient accumulation** where we run several smaller microbatches, sum their gradients, and step the optimizer with the accumulated gradient. One pass on the 530M token corpus is ~4k steps (`batch 64 × accum 8 × context 256 = **131,072 tokens`)so a `max_steps` of 10k gives us about 2.5 epochs of training. We checkpoint every 500 steps.
+We reach a large effective batch through **gradient accumulation** where we run several smaller microbatches, sum their gradients, and step the optimizer with the accumulated gradient. One pass on the 530M token corpus is ~4k steps (`batch 64 × accum 8 × context 256 = 131,072 tokens`), so a `max_steps` of 10k gives us about 2.5 epochs of training. We checkpoint every 500 steps.
 
 <p align="left">
     <img src="outputs/base_loss.png" width="600"/>  
 </p>
 
-Thanks fo the size of the dataset compared to the size of the model, the train and validation track each other closely without overfitting. Validation loss flattens quickly.
+Thanks to the size of the dataset compared to the size of the model, the train and validation track each other closely without overfitting. Validation loss flattens quickly.
 
 ### 6. Sampling
 
 [Generation](src/inference/generate.py) is autoregressive - feed in the prompt, predict a distribution over the next token, sample one, append it, and repeat. We crop to the last `context_length` tokens each step and trim the output at the first EOS.
 
-One learning here was that sampling performed better than beam search or greedy generation. For open-ended story generation a higher diversity is better, and we can shape the distribution before drawing from it by adjusting `temperature` to scale the logits (lower is greedier and safer, higher is more diverse), and `top-k` to keep only the k most likely tokens. At temperature 0 this collapses to greedy decoding. 
+One learning here was that sampling performed better than beam search or greedy generation. For open-ended story generation a higher diversity is better, and we can shape the distribution before drawing from it by adjusting `temperature` to scale the logits (lower is greedier and safer, higher is more diverse), `top-k` to keep only the k most likely tokens, and `top-p` to keep the smallest set of tokens covering probability mass p. At temperature 0 this collapses to greedy decoding. 
 
 ### 7. Evaluation
 
-The main metric we used for evaluation at this stage is [validation perplexity](src/eval/perplexity.py) - the `exp(mean cross-entropy)` which is the average per-token branching factor (how many tokens the model is effectively "choosing between"). A lower value is better here because it means that the model assigned a high probablility to the token which actually came next. 
+The main metric we used for evaluation at this stage is [validation perplexity](src/eval/perplexity.py) - the `exp(mean cross-entropy)` which is the average per-token branching factor (how many tokens the model is effectively "choosing between"). A lower value is better here because it means that the model assigned a high probability to the token which actually came next.
 
 We evaluate on evenly-spaced windows across the whole split to keep the number deterministic and comparable run-to-run. The batches are capped at `max_batches` to keep evaluation cheap compared to the (~100× larger) train split.
 
-We deliberately left a larger LLM judge scoring grammar/consistency/creativity/the overall story out of scope here due to cost and the theoretical case that one doesn't exist yet.
-
-lower is better. Rather than a random sample, we score **evenly-spaced non-overlapping windows across the whole split** so the number is deterministic and representative run-to-run, with a `max_batches` cap that keeps evaluation cheap on the ~100× larger train split, and we token-weight the mean so partial final batches don't skew it.
-
+We deliberately left a larger LLM judge scoring grammar/consistency/creativity out of scope here to save cost.
 
 ---
 
 ## Part II - Post-training
 
-Ordered offline/simple → online/hard, each stage independently useful.
+### 8. SFT (Supervised fine-tuning)
 
-**Acronym map (read once):** RLHF is not a separate method — it's the umbrella
-for SFT → reward model → PPO. DPO and PPO/GRPO are alternative routes from the
-*same* preference data (offline-and-simple vs online-and-stronger). GRPO is
-just PPO minus the critic. Learning-optimal path:
-**SFT → DPO → GRPO(verifiable)**, adding the reward model + PPO last only for
-the full classic stack.
+Now that we have a base model which can complete stories, we want to teach it to follow instructions (prompts!). Here we use [TinyStories Instruct](https://huggingface.co/datasets/roneneldan/TinyStoriesInstruct) which are stories prefaced with constraints and fine-tune the base checkpoint on `(instruction → story)` pairs. 
 
-### 8. SFT (instruction format) ✓
-Teach the base model a lightweight instruction schema. Use
-`TinyStories-Instruct` — stories prefaced with constraints (required words,
-summary, feature flags: dialogue / bad ending / moral / plot twist).
-Fine-tune the base checkpoint on `(instruction → story)` pairs; same
-next-token loss, masked to the response span.
+For [SFT](src/training/sft.py) we follow the same next-token loss as in pretraining, except we mask the prompt (see [src/data/sft_data.py](src/data/sft_data.py)) so that the model is only trained to produce the story and not the instruction.
 
-Does two jobs: a prompt-following model, **and** the reference policy every
-later RL/DPO stage regularizes against. Deliverable: `sft.pt`.
+The SFT model is what allows the model to follow instructions at all vs pure generation, and is the baseline for all later post-training techniques. Perplexity rises from 3.67 to 8.84 thanks to the instruction following but word-inclusion pass rate (see the next section) increased dramatically from 0.08 to 0.85.
 
-### SFT — teaching the instruction schema
-- Goal: base LM → follows TinyStories-Instruct format (Summary/Words/
-  Sentence/Features → Story). Does double duty: the deliverable model AND
-  the frozen reference every later stage's KL is measured against.
-- Method: same next-token loss as pretraining, but mask the prompt
-  (labels = -1 up to "Story:") so only the response + EOS trains. Padded
-  DataLoader over the finite instruct set; init from pretrained best.pt.
-- Data: filter examples > context (drop, never truncate — model only sees
-  complete stories). prompt = text incl. "Story:", response = story + EOS.
-- Training: 1 epoch (~50k steps), LR 3e-4 (< pretraining 6e-4), cosine +
-  warmup, early-stop on masked val loss (best 1.176).
-- Results — the payoff is in the eval, not the loss number:
-    · word-inclusion pass-rate: Base 0.08 → SFT 0.85  (SFT is what makes
-      instruction-following possible at all)
-    · LM trade-off: plain-story ppl 3.67 → 8.84 (specializing costs some
-      general LM quality — a real, quantified cost, not a footnote)
-    · before/after samples: base ignores "Words:", SFT includes them
-- Key insight: the Base→SFT jump is the single biggest capability gain in
-  the whole post-training stack; DPO/GRPO/PPO are refinements on top.
+<p align="left">
+    <img src="outputs/sft_curves.png" width="600"/>
+</p>
 
+The masked-response loss falls steadily from ~1.43 to ~1.18 over ~50k steps, with validation landing at ~1.18 - a nice, steady improvement. We plot an exponential moving average (EMA) to smooth the per-step noise.
 
-### 9. Reward / preference design ✓
-The pivot everything downstream depends on. Three sources, cheapest first:
-- **Verifiable / programmatic** — did the story contain the required words?
-  match the summary length? include the feature? Zero models, zero labels.
-  Cleanest fit for GRPO; the recommended starting point.
-- **LLM-as-judge (RLAIF)** — score the rubric with a bigger model. Noisier,
-  slower, captures quality the checks can't. Skip this to save costs - have done
-  a lot of LLM judge work in evals.
-- **Trained reward model** — only for the classic PPO/RLHF path (step 11).
+### 9. Reward
 
-Remove the incentive to repeat (set) and other reward hackable methods.
+For each RL stage that follows we need a reward to determine how good a completion is and thus which to reward. There are three ways to get one:
+
+- **Code-based checks:** Gives deterministic, verifiable rewards but are less flexible.
+- **LLM-as-judge:** LLMs (particularly larger models) can be used as a grader for various rubrics, but scores can be undeterministic.
+- **Trained reward model:** We can train an ML/LLM model from existing preference labels; this is resource and time consuming but results in a customizable reward model.
+
+Although an LLM-judge using a larger model would have probably been the best choice here, to save both monetary and resource costs we choose the first and cheapest option here. Our [verifiable reward](src/eval/reward.py) is **word-inclusion**, which is the fraction of the required words that appear in the story. A lenient prefix match allows e.g. 'jump' to match 'jumping' and to prevent reward hacking via repeating words we count each distinct word only once.
+
+Despite that, word-inclusion alone is still **reward hackable** - the model discovered that it can write repetitive prose that reads poorly but includes the required words and scores near perfectly. Thus we introduce a repetition penalty which pushes the model to stay diverse.
+
+$$r_\text{shaped} = r_\text{verifiable} - 0.5 \cdot r_\text{penalty}$$
+$$\qquad r_\text{penalty} = 1 - \frac{\text{distinct 2-grams}}{\text{total 2-grams}}$$
+
+This drives DPO pair selection and later, the rewards for online RL.
 
 ### 10. DPO
-Do this **before** any online RL. Needs preference pairs `(chosen, rejected)`:
-generate two completions per prompt, rank by verifiable score or judge.
-No reward model, no sampling loop, no critic — a classification-style loss
-against the frozen SFT reference, KL baked into the objective. Most stable,
-easiest to debug. Deliverable: `dpo.pt`.
 
-**Preference pairs** (`make_preferences.py`, finishes step 9): load the SFT
-checkpoint and, for each instruct prompt with a `Words:` field, sample K
-completions at temperature > 0, score each with `verifiable_reward`, and emit
-`(prompt, chosen, rejected)` on a reward spread (ties skipped — no signal).
-Saved to `data/dpo/pairs.jsonl`.
+[DPO](src/training/dpo.py) is the first post-training step we run. It's the simplest option which works similarly to training a supervised classification model. It's an **off-policy** method which learns from a fixed set of already labelled pairs rather than samples from the current policy, folding the preference directly into its loss function. This makes it stable and cheap but unable to discover anything outside of the distribution of the training set.
 
-**Training** (`dpo_train.py`): policy init from SFT, a frozen reference clone of
-SFT, a `sequence_logprob` helper (summed response-token log-probs, reusing the
-SFT prompt masking), the `-log σ(β·[...])` objective, and checkpoints to
-`dpo_checkpoints/`. Reuses the optimizer / scheduler / checkpoint machinery.
-Diagnostics: reward accuracy (policy prefers chosen) and the reward margin.
+Using [make_preferences.py](src/data/make_preferences.py), we load the SFT checkpoint and, for each instruct prompt with a `Words:` field, sample K completions at temperature > 0. We then score each with the verifiable reward and return a `(prompt, chosen, rejected)` tuple. Pairs that tie are dropped since an equal reward carries no learning signal. 
 
-Make sure we can view the output sentences (like in generate_story.py) and the overall eval of it.
+We now train a *policy* model which is compared to the original *frozen reference* SFT model it's initialised from. It only sees the chosen/rejected pairs we selected and never the reward scores themselves. The objective nudges the policy to raise the log-probability of the chosen response and lower it for the rejected response, relative to the reference. 
 
-Need to reduce gameability, and include a verifiable reward metric for fluency.
+$$\mathcal{L}_\text{DPO} = -\log \sigma\left( \beta \left[ \left(\log \pi_\theta(y_w) - \log \pi_\text{ref}(y_w)\right) - \left(\log \pi_\theta(y_l) - \log \pi_\text{ref}(y_l)\right) \right] \right)$$
 
+where $y_w$ is the chosen response, $y_l$ the rejected one, $\pi_\theta$ the policy and $\pi_\text{ref}$ the frozen reference, and each $\log \pi(y)$ is the summed log-prob of the response tokens ([`sequence_logprob`](src/training/rl_common.py), reusing the SFT prompt masking). The square-bracketed term is DPO's *implicit reward* — how much more the policy favors a response than the reference does. The KL constraint is baked directly into the loss in the $-\log \pi_\text{ref}(y)$ terms and a larger $\beta$ (here `0.3`) weights the log-ratio more and keeps the policy closer to the reference.
 
-The objective is
-    L = -log sigmoid( beta * [ (logp_pi(y_w) - logp_ref(y_w))
-                             - (logp_pi(y_l) - logp_ref(y_l)) ] )
-where ``logp(y)`` is the summed log-prob of the response tokens (``sequence_logprob``),
+During training we track 2 diagnostics:
+
+1. **Reward accuracy** - the fraction of pairs where `logits > 0` i.e. is the policy learning to assign the chosen response more than it already was.
+2. **Reward margin** — the mean of $logits / \beta$ which is the average reward gap between the chosen and rejected pairs. A widening margin means the policy is separating good from bad completions more confidently.
+
+When training the model both metrics stayed healthy but at 2+ epochs the validation perplexity blew up to +42% as the overfitting started and the language quality decreased. We thus train a single epoch at a deliberately low LR (`1e-5`, far below SFT's) which performed much better at just +2.9% perplexity.
+
+<p align="left">
+    <img src="outputs/dpo_curves.png" width="500"/>
+</p>
 
 
-### 11. Reward model *(only for the RLHF/PPO path)*
-A scalar reward head on the preference pairs via the Bradley-Terry loss.
-**Skip entirely** for verifiable-reward GRPO or DPO — both bypass it. Build
-only if you want the classic three-stage RLHF stack.
+The training curves are good. The reward margin widens as the separation between chosen and rejected (and thus loss) decreases, and the preference accuracy climbs towards ~0.8.
 
-Is this the reward model for RLHF + PPO e.g. an LLM judge which outputs a score?
+Overall, DPO was the biggest win of all the post-training approaches we tried (see [Results](#results)), partly due to the simplicity of the problem we framed here. 
+
+### 11. Reward model *(only for the classic RLHF/PPO path)*
+
+In the classic RLHF (reinforcement learning from human feedback) recipe (the one behind InstructGPT / ChatGPT), instead of a code-based reward we train a model on human preference pairs. The LM head (token-output) of the base model is swapped for a single scalar head that predicts a "quality" score for any `(prompt, response)`. It's trained with the **Bradley-Terry** loss which is the same preference model DPO uses - given a chosen and a rejected response, the model maximizes $\log \sigma(r_\text{chosen} - r_\text{rejected})$, i.e. learns to score the preferred response higher.
+
+Once trained, this reward model stands in for the human and is used to score any output. For PPO, at each step it generates fresh completions from the current policy, generates a reward for them, and uses them to update the policy.
+
+Since we have a verifiable reward, for this project we skip training the reward model (or would have used an LLM-judge from a larger model). 
 
 ### 12. PPO / GRPO
-Online RL — the hardest stage.
 
-We can't RL our way to behaviours the policy has zero proablity of producing.
-It only sharpens the existing distribution (which is why we SFT first - in this case on instruct).
+This is the **online RL** stage where the model learns from its own generated samples rather than a fixed dataset. RL can only sharpen behaviour a model already has - like SFT, it can't introduce new knowledge or capabilities.
 
-- **PPO** — classic RLHF workhorse but heavy: policy + value/critic + reward
-  model + frozen reference all resident, and finicky to stabilize.
-- **GRPO** — drops the value network; samples a *group* of completions per
-  prompt and normalizes each reward against the group mean/std for the
-  advantage. Lighter (no critic), pairs perfectly with verifiable rewards.
+Both policy-gradient methods here share the same flow: sample completions, score them with the verifiable reward we created earlier (replacing a reward model), and take a clipped policy-gradient step with a per-token KL leash to the frozen SFT reference so the policy can't drift into reward-hacking. The one difference is how they compute the **advantage**.
 
-Apply a KL penalty on the objective, and GAE for the advantage. 
+The advantage is the actual training signal. A raw reward is a poor signal on its own — a completion scoring 0.7 is *great* on a hard prompt and *mediocre* on an easy one — so instead of "what reward did this get?" we ask "was it **better or worse than expected** from here?" Advantage = actual return − an *expected-return baseline*, so the update pushes up completions that beat expectations and pushes down ones that fall short. GRPO and PPO differ only in where that baseline comes from:
 
-Advantages come from GAE over the valuebaseline, then are normalized across the batch's response tokens.
-    The reward model produces one scalar for the whole response and applies 
-    that scalar to the very last response token, whilst the KL penalty applies 
-    to every generated token.GAE reshapes how we estimate the advantage, normalized over the response tokens.
+**GRPO** ([grpo.py](src/training/grpo.py)) is the lighter method. For each prompt we sample a *group* of `G = 8` completions and use the **group's own mean as the baseline**, normalizing by its standard deviation: `A = (r − mean) / std`. No extra network. A neat consequence is that a group whose completions all score the same has zero advantage and contributes no gradient — and it pairs perfectly with verifiable rewards.
 
-**Recommended:** GRPO with verifiable rewards. Treat PPO as optional "build the
-full classic stack for the education."
+<p align="left">
+    <img src="outputs/grpo_curves.png" width="380"/>
+</p>
 
-GRPO vs PPO, side by side
-              GRPO	                    PPO
-baseline	    group mean/std	          learned critic (value head)
-extra model	  none	                    critic backbone (trained)
-advantage	    (r−mean)/std	            GAE over value fn
-loss	        clipped surrogate + KL	  clipped actor + clipped value
-Both consume the same shaped reward and frozen SFT reference, so you can grade them head-to-head.
-
-That reframes your repetition question usefully: the base sets the diversity ceiling (0.92), and the real target for DPO/GRPO/PPO is getting distinct2 back up toward it while keeping pass-rate high. 
-
-Instruction following decreases the diversity from free-flow story genereation.
-
-PPO
-Everything GRPO drops, added back. Each step:
-
-1. **Rollout.** Sample prompts, one completion each from the policy; record the
-   old per-token log-probs, the reference log-probs, and the critic's per-token
-   values.
-2. **Reward.** A per-token KL penalty `-beta*(logp_policy - logp_ref)` at every
-   response token, plus the scalar shaped reward added at the final (EOS) token --
-   the standard RLHF token-reward shaping.
-3. **GAE.** Generalized Advantage Estimation over the response tokens using the
-   critic's value baseline (this is what GRPO replaces with a group mean).
-4. **Update.** `inner_epochs` passes of a clipped actor surrogate + a clipped
-   value loss, actor and critic on separate optimizers/LRs.
+Reward increases smoothly towards ~0.91 while KL from the reference grows smoothly and slowly (the ~0.011 in the Results table), and every group stays "active" (each prompt's completions vary enough to give a non-zero advantage).
 
 
-GRPO
-1. **Rollout.** Sample a batch of instruct prompts; for each, sample a *group* of
-   `G` completions from the current policy.
-2. **Reward.** Score every completion with the shaped reward (verifiable word
-   inclusion minus a repetition penalty -- `src.eval.reward.shaped_reward`).
-3. **Advantage.** Normalize each reward against its group: `A = (r - mean) / std`.
-   No value network -- the group mean is the baseline. A group whose completions
-   all score the same has zero advantage and contributes no gradient.
-4. **Update.** A clipped PPO surrogate on the response tokens, with a per-token
-   KL leash to the frozen reference (the SFT model), so the policy improves reward
-   without drifting into the reward-hacking degeneracy step 13 catches.
+**PPO** ([ppo.py](src/training/ppo.py)) is the full classic actor-critic stack alongside our verifiable reward. The *critic* is a second GPT backbone with a scalar value head which outputs for each token the expected total future reward $V(s)$ from that point onward. The advantage then comes from **GAE** (Generalized Advantage Estimation, $\lambda = 0.95$, $\gamma = 1.0$), which combines the per-token rewards with these value estimates via one-step TD (temporal difference) errors
 
+$$\delta_t = r_t + \gamma\, V(s_{t+1}) - V(s_t)$$
+
+decayed forward. This gives a smoother, lower-variance advantage than the crude $\text{return} - V(s_\text{start})$. The reward shaping is the standard RLHF form of a per-token KL penalty at every response token, with the scalar shaped reward added at the final EOS token. After PPO generates a batch of completions, it reuses them for 4 clipped gradient passes (the clipping is what allows the reuse), training the policy slowly while letting the critic learn faster. 
+
+<p align="left">
+    <img src="outputs/ppo_curves.png" width="380"/>
+</p>
+
+The value loss collapses from 1.13 to near 0 within the first 30 steps which shows it trivially learned to predict a near-constant reward (0.8 for this word inclusion task on most prompts) and the GAE advantages vanish. With no advantage signal, the actor gets essentially no gradient and the loss hovers at ~−0.002 and the reward stays flat and noisy for the remaining ~370 steps. GRPO is better at yielding usable advantages from low-variance rewards thanks to group-relative baselines normalising rewards within each prompt's samples.
+
+|  | GRPO | PPO |
+|---|---|---|
+| **advantage baseline** | group mean/std | learned critic (value head) |
+| **extra model** | none | critic backbone (trained) |
+| **advantage** | `(r − mean) / std` | GAE over the value function |
+| **loss** | clipped surrogate + KL | clipped actor + clipped value |
+
+
+Overall, GRPO landed as a strong, conservative second to DPO with most of the gain at a third of the KL whilst PPO underperformed as a worse fit for fully verifiable rewards. As the most sample-hungry and hardest of the methods to stabilise, the next step for PPO would be further hyperparameter tuning.
 
 ### 13. Post-training eval
-Three things, not one number:
-- **Win-rate** vs the SFT baseline (verifiable pass-rate or judge preference)
-- **KL from the reference** — catch over-optimization
-- **Regression check** — base capability (perplexity, grammar) didn't collapse
-- **Spot checks** - eyeball outputs from Base, SFT, DPO, PPO, GRPO
-- **Speculative Decoding** - implement and try, its how all the labs are speeding up token throughput today 
 
-Watch for **reward hacking**: an "include these words" reward will teach the
-model to cram words in ungrammatically — pass-rate climbs while stories get
-worse. Exactly why a quality metric rides alongside the reward.
+The eval harness ([winrate.py](src/eval/winrate.py)) reports several metrics side by side against the SFT baseline. To guard against reward hacking, we track a quality metric (distinct-2) alongside the target we optimize (in this case win-rate).
+
+Separately, we also implement **speculative decoding** ([speculative.py](src/inference/speculative.py)) as the standard way labs speed up token throughput today. A small draft model proposes $\gamma$ tokens, the target verifies all of them in one forward pass, and an accept/reject correction guarantees the output is distributed the same as the target - so it only affects speed, never quality.
+
+Benchmarking a 13.7M target against a 1.4M draft on GPU  ([speculative_test.py](tests/speculative_test.py)):
+
+| metric | mean value | notes |
+|---|---|---|
+| accept-rate | ~0.19 | the fraction of drafted tokens the target accepts |
+| tokens / target-call | ~1.7 | each expensive target (larger model) forward pass yields ~1.7 tokens instead of 1 |
+| per-token latency | ~0.55× | speculative decoding is actually *slower* on this setup |
+
+We generate more tokens per target forward pass but on this setup speculative decoding is actually slower. Since the draft model is weak (only 19% are accepted) and the target is only 13.7M params, the draft + verification overhead actually outweighs the savings here. We'd expect speculative decoding to pay off in real applications where the target is large and bound by compute/memory bandwidth.
+
+---
+
+## Future work
+
+- Introduce a larger model (LLM-judge) to score if stories are "good" vs eyeballing them.
+- Expand the SFT and verifiable rewards to include features from TinyStories-Instruct like required sentences and feature flags which adjust dialogue, bad endings, story moral, and plot twists.
+- Tune the hyperparameters to get a stable run for PPO.
+- Train a real reward model and see how it works with PPO and reward hacking.
 
 ---
 
@@ -354,6 +319,5 @@ worse. Exactly why a quality metric rides alongside the reward.
 - Rafailov et al., [*Direct Preference Optimization*](https://arxiv.org/abs/2305.18290) (DPO, 2023)
 - Shao et al., [*DeepSeekMath*](https://arxiv.org/abs/2402.03300) (GRPO, 2024)
 - Schulman et al., [*Proximal Policy Optimization Algorithms*](https://arxiv.org/abs/1707.06347) (PPO, 2017)
-- Leviathan et al., [*Fast Inference from Transformers via Speculative Decoding*](https://arxiv.org/abs/2211.17192) (2023)
 - Karpathy, [minGPT](https://github.com/karpathy/minGPT) for the stateless-sampling training pattern
 - [SentencePiece](https://github.com/google/sentencepiece) for subword tokenisation
