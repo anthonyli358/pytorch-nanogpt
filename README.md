@@ -3,6 +3,8 @@ Pytorch implementation of a decoder-only GPT.
 
 Trains a ~14M-parameter small language model end-to-end on the [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories) dataset, then explores the full modern post-training stack on [TinyStories Instruct](https://huggingface.co/datasets/roneneldan/TinyStoriesInstruct) with SFT (supervised fine-tuning) → DPO (direct policy optimization) → GRPO (group relative policy optimization) / PPO (proximal policy optimization).
 
+--- 
+
 ## Results
 
 After post-training, we evalute all the trained models with the SFT model as the baseline. For this we use 4 metrics:
@@ -62,6 +64,8 @@ Finally, the main takeaways from this implementation exercise are:
 - Reward hacking will generally find the gaps in any verifiable reward. It's a classic measurement problem: we need to be sure that what we're measuring actually represents the outcome we want.
 - Similarly, for text-based problems it's important to consider multiple independent metrics. Pure validation loss on DPO training improved when training more than 1 epoch, but the validation perplexity increased from 2.9% to 42%. KL divergence alone didn't catch this.
 
+---
+
 ## Getting Started
 
 1. For GPU, go to the [pytorch](https://pytorch.org/get-started/locally/) website and select the local installs to get the bash command.
@@ -89,6 +93,8 @@ uv run python -m src.main
 ```bash
 uv run pytest
 ```
+
+---
 
 ## Development
 
