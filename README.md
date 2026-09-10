@@ -39,10 +39,10 @@ Even though eyeballing some sentences we might choose to prefer some GRPO result
 <details>
 <summary><b>Words: escape, war, tall</b> - we need the SFT to follow the task itself.</summary>
 
-> **Base** (r=0.00): army, army, army, army, army, army, army, army, army, army, army, army, army, army, army... *(collapses into a single repeated token)*
-> **SFT** (r=1.00): Tom and Lily were playing in the forest. They saw a big, tall tree house... "It's a war!" Tom said. "We need to escape!" ...They were safe. They said "Thank you, Ben. You are a good friend."
-> **DPO** (r=1.00): Once upon a time, there was a tall man named Tom... He went to the window and saw a big war... Lily said, "I want to escape from the scary house and find a place to live." ...They all lived together and had fun in the forest.
-> **GRPO** (r=1.00): Once upon a time, there was a tall man named Tom... Tom saw a big war with many people. They were all scared and wanted to escape... They met a nice man named Ben... They stayed with Ben and had a fun day.
+> **Base** (r=0.00): army, army, army, army, army, army, army, army, army, army, army, army, army, army, army... *(collapses into a single repeated token)*\
+> **SFT** (r=1.00): Tom and Lily were playing in the forest. They saw a big, tall tree house... "It's a war!" Tom said. "We need to escape!" ...They were safe. They said "Thank you, Ben. You are a good friend."\
+> **DPO** (r=1.00): Once upon a time, there was a tall man named Tom... He went to the window and saw a big war... Lily said, "I want to escape from the scary house and find a place to live." ...They all lived together and had fun in the forest.\
+> **GRPO** (r=1.00): Once upon a time, there was a tall man named Tom... Tom saw a big war with many people. They were all scared and wanted to escape... They met a nice man named Ben... They stayed with Ben and had a fun day.\
 > **PPO** (r=1.00): Tom and Lily are friends... "We can escape from the house." ...It is very tall... "I am Ben. He is a war. He is a big war. He is mean. He is mean. He is mean..." *(pass-rate hit, but the tail loops)*
 
 </details>
@@ -50,10 +50,10 @@ Even though eyeballing some sentences we might choose to prefer some GRPO result
 <details>
 <summary><b>Words: meet, waffle, new</b> — DPO and GRPO make more sense contextually.</summary>
 
-> **Base** (r=0.33): Words, new friends. *(ignores the task)*
-> **SFT** (r=0.67): Once upon a time, there was a little girl named Lily. She got a new waffle for breakfast... She saw a new friend named Timmy... "Yes, I met a new friend named Timmy."
-> **DPO** (r=1.00): ...She had a new waffle for breakfast... Lily decided to go outside and meet her new friend, Timmy... "Hi Timmy, do you want to meet me?" ...happy that she had met her new friend.
-> **GRPO** (r=1.00): ...She had a new waffle for breakfast... She saw a new friend in the park. Her new friend was a little boy named Max... Lily was happy to meet Max and they became good friends.
+> **Base** (r=0.33): Words, new friends. *(ignores the task)*\
+> **SFT** (r=0.67): Once upon a time, there was a little girl named Lily. She got a new waffle for breakfast... She saw a new friend named Timmy... "Yes, I met a new friend named Timmy."\
+> **DPO** (r=1.00): ...She had a new waffle for breakfast... Lily decided to go outside and meet her new friend, Timmy... "Hi Timmy, do you want to meet me?" ...happy that she had met her new friend.\
+> **GRPO** (r=1.00): ...She had a new waffle for breakfast... She saw a new friend in the park. Her new friend was a little boy named Max... Lily was happy to meet Max and they became good friends.\
 > **PPO** (r=1.00): ...She loved waffles more than anything in the world... While playing, she saw a new friend. It was a big, fluffy dog... Lily was so happy to meet the new friend.
 </details>
 
@@ -61,7 +61,7 @@ Even though eyeballing some sentences we might choose to prefer some GRPO result
 
 
 Finally, the main takeaways from this implementation exercise are:
-- Reward hacking will generally find the gaps in any verifiable reward. It's a classic measurement problem: we need to be sure that what we're measuring actually represents the outcome we want.
+- Reward hacking will generally find the gaps in any verifiable reward. It's a classic measurement problem; we need to be sure that what we're measuring actually represents the outcome we want.
 - Similarly, for text-based problems it's important to consider multiple independent metrics. Pure validation loss on DPO training improved when training more than 1 epoch, but the validation perplexity increased from 2.9% to 42%. KL divergence alone didn't catch this.
 
 ---
@@ -226,7 +226,7 @@ We now train a *policy* model which is compared to the original *frozen referenc
 
 $$\mathcal{L}_\text{DPO} = -\log \sigma\left( \beta \left[ \left(\log \pi_\theta(y_w) - \log \pi_\text{ref}(y_w)\right) - \left(\log \pi_\theta(y_l) - \log \pi_\text{ref}(y_l)\right) \right] \right)$$
 
-where $y_w$ is the chosen response, $y_l$ the rejected one, $\pi_\theta$ the policy and $\pi_\text{ref}$ the frozen reference, and each $\log \pi(y)$ is the summed log-prob of the response tokens ([`sequence_logprob`](src/training/rl_common.py), reusing the SFT prompt masking). The square-bracketed term is DPO's *implicit reward* — how much more the policy favors a response than the reference does. The KL constraint is baked directly into the loss in the $-\log \pi_\text{ref}(y)$ terms and a larger $\beta$ (here `0.3`) weights the log-ratio more and keeps the policy closer to the reference.
+where $y_w$ is the chosen response, $y_l$ the rejected one, $\pi_\theta$ the policy and $\pi_\text{ref}$ the frozen reference, and each $\log \pi(y)$ is the summed log-prob of the response tokens ([sequence_logprob](src/training/rl_common.py), reusing the SFT prompt masking). The square-bracketed term is DPO's *implicit reward* — how much more the policy favors a response than the reference does. The KL constraint is baked directly into the loss in the $-\log \pi_\text{ref}(y)$ terms and a larger $\beta$ (here `0.3`) weights the log-ratio more and keeps the policy closer to the reference.
 
 During training we track 2 diagnostics:
 
@@ -302,7 +302,7 @@ Benchmarking a 13.7M target against a 1.4M draft on GPU  ([speculative_test.py](
 | metric | mean value | notes |
 |---|---|---|
 | accept-rate | ~0.19 | the fraction of drafted tokens the target accepts |
-| tokens / target-call | ~1.7 | each expensive target (larger model) forward pass yields ~1.7 tokens instead of 1 |
+| tokens / target-call | ~1.7 | each target (expensive larger model) forward pass yields ~1.7 tokens instead of 1 |
 | per-token latency | ~0.55× | speculative decoding is actually *slower* on this setup |
 
 We generate more tokens per target forward pass but on this setup speculative decoding is actually slower. Since the draft model is weak (only 19% are accepted) and the target is only 13.7M params, the draft + verification overhead actually outweighs the savings here. We'd expect speculative decoding to pay off in real applications where the target is large and bound by compute/memory bandwidth.
